@@ -1,0 +1,32 @@
+{
+  "classic": {
+    "bottom": 0,
+    "edgegap": 0,
+    "glength": 0,
+    "gpos": 0,
+    "groupX": 0,
+    "groupY": 0,
+    "hdepth": 8,
+    "left": 50,
+    "overlap": 0,
+    "pblh": 0,
+    "pblv": 100,
+    "pbrh": 100,
+    "pbrv": 100,
+    "position": 150,
+    "ptlh": 0,
+    "ptlv": 0,
+    "ptrh": 100,
+    "ptrv": 0,
+    "reverse": false,
+    "right": 50,
+    "top": 100,
+    "vdepth": 5
+  },
+  "matrix": {
+    "cabling": "snake",
+    "ledshoriz": 1,
+    "ledsvert": 1,
+    "start": "top-left"
+  }
+}

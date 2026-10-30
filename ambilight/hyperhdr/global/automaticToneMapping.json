@@ -1,0 +1,8 @@
+{
+  "enable": false,
+  "time_to_disable_tone_mapping": 500,
+  "time_to_tone_mapping": 30,
+  "tone_mapping_u_threshold": 175,
+  "tone_mapping_v_threshold": 160,
+  "tone_mapping_y_threshold": 180
+}

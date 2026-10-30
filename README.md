@@ -117,6 +117,7 @@ On Windows, type `python3 pear` in place of `./pear`.
 ./pear on | off    Pear Home, or LG's own
 ./pear shot        screenshot the TV to docs/screenshot.jpg
 ./pear uninstall   remove PearWebOS from the TV
+./pear ambilight pull   copy HyperHDR, Hyperk and PicCap settings into ambilight/
 ```
 
 ## How it works
@@ -137,6 +138,10 @@ On the TV everything lives in `/var/lib/pearwebos`, and a Homebrew Channel start
 - **A full reboot**, such as after a power cut, starts with LG's stock Home for a few seconds before Pear takes over: LG's boot image holds its own Home, so Pear has to restart it. With Quick Start+ on, ordinary power-ons resume straight into Pear.
 - **OLED TVs** that sit on Home: quiet mode leaves less on screen, which is kinder to the panel.
 - **If Pear's Home fails to load**, LG's Home shows instead, with the reason in small text in the bottom-left corner.
+
+## Ambient lighting
+
+This TV also runs a DIY ambilight: HyperHDR and PicCap on the TV, an ESP32-S3 over USB. Its settings are kept in this repo under `ambilight/`, pulled with `./pear ambilight pull`. Wiring, firmware and what each app does: [docs/ambilight.md](docs/ambilight.md).
 
 ## Pairs well with
 

@@ -1,0 +1,8 @@
+{
+  "apiAuth": true,
+  "internetAccessAPI": false,
+  "ipWhitelist": [],
+  "localAdminAuth": true,
+  "localApiAuth": false,
+  "restirctedInternetAccessAPI": false
+}

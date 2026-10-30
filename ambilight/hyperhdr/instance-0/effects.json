@@ -1,0 +1,8 @@
+{
+  "disable": [
+    ""
+  ],
+  "paths": [
+    "$ROOT/custom-effects"
+  ]
+}

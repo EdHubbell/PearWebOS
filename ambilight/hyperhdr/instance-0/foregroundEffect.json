@@ -1,0 +1,11 @@
+{
+  "color": [
+    255,
+    0,
+    0
+  ],
+  "duration_ms": 3000,
+  "effect": "Rainbow swirl fast",
+  "enable": true,
+  "type": "effect"
+}

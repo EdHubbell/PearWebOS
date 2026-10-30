@@ -1,0 +1,35 @@
+{
+  "apMode": false,
+  "architecture": "ESP32-S3",
+  "b": 8,
+  "board": "esp32s3",
+  "brightness": 255,
+  "calBlue": 112,
+  "calGain": 255,
+  "calGreen": 176,
+  "calRed": 176,
+  "deviceName": "hyperk",
+  "disableSpiEmulation": false,
+  "effect": 0,
+  "extraMdnsTag": "wled",
+  "g": 32,
+  "led_color_order": 0,
+  "min-segments-for-i2s": 1,
+  "numLeds": 200,
+  "r": 196,
+  "relay-gpio": -1,
+  "relay-inverted": false,
+  "segmentSupported": 8,
+  "segments": [
+    {
+      "clock": 4,
+      "data": 4,
+      "reversed": 0,
+      "startIndex": 0
+    }
+  ],
+  "serial-port-speed": 2000000,
+  "ssid": "<redacted>",
+  "type": 1,
+  "version": "0.0.5"
+}

@@ -1,0 +1,12 @@
+{
+  "custom_topic": "",
+  "disableApiAccess": false,
+  "enable": false,
+  "host": "",
+  "ignore_ssl_errors": true,
+  "is_ssl": false,
+  "maxRetry": 0,
+  "password": "",
+  "port": 1883,
+  "username": ""
+}

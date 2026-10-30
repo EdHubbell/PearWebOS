@@ -1,0 +1,19 @@
+{
+  "address": "/tmp/hyperhdr-domain",
+  "autostart": true,
+  "backend": "auto",
+  "fps": 30,
+  "height": 180,
+  "nogui": false,
+  "nohdr": false,
+  "nopowerstate": false,
+  "novideo": false,
+  "nv12": false,
+  "port": 19400,
+  "priority": 150,
+  "quirks": 0,
+  "uibackend": "auto",
+  "unix-socket": true,
+  "vsync": true,
+  "width": 320
+}

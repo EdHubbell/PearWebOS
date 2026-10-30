@@ -1,0 +1,12 @@
+{
+  "antiFlickeringFilter": true,
+  "continuousOutput": false,
+  "damping": 26,
+  "enable": true,
+  "smoothingFactor": 0,
+  "stiffness": 150,
+  "time_ms": 150,
+  "type": "HybridRgbInterpolator",
+  "updateFrequency": 50,
+  "y_limit": 0.03
+}

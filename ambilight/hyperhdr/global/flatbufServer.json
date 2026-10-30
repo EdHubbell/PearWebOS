@@ -1,0 +1,7 @@
+{
+  "enable": true,
+  "hdrToneMapping": false,
+  "port": 19400,
+  "quarterOfFrameMode": false,
+  "timeout": 5
+}

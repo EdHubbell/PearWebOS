@@ -1,0 +1,22 @@
+{
+  "blueSignalThreshold": 5,
+  "cropBottom": 0,
+  "cropLeft": 0,
+  "cropRight": 0,
+  "cropTop": 0,
+  "device": "auto",
+  "fps": 20,
+  "greenSignalThreshold": 5,
+  "hardware": true,
+  "hdrToneMapping": false,
+  "monitor_nits": 200,
+  "noSignalCounterThreshold": 200,
+  "redSignalThreshold": 5,
+  "reorder_displays": 0,
+  "sDHOffsetMax": 0.75,
+  "sDHOffsetMin": 0.25,
+  "sDVOffsetMax": 0.75,
+  "sDVOffsetMin": 0.25,
+  "signalDetection": false,
+  "videoMode": 512
+}

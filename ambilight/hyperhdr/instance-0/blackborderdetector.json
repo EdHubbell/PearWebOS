@@ -1,0 +1,9 @@
+{
+  "blurRemoveCnt": 1,
+  "borderFrameCnt": 50,
+  "enable": false,
+  "maxInconsistentCnt": 10,
+  "mode": "default",
+  "threshold": 5,
+  "unknownFrameCnt": 600
+}

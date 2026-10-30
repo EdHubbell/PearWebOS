@@ -1,0 +1,13 @@
+{
+  "awa_mode": true,
+  "colorOrder": "rgb",
+  "enable_ice_rgbw": false,
+  "espHandshake": true,
+  "forceSerialDetection": true,
+  "maxRetry": 0,
+  "output": "ttyACM0",
+  "rate": 2000000,
+  "refreshTime": 20,
+  "type": "adalight",
+  "white_channel_calibration": false
+}

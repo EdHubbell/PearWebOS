@@ -7,6 +7,7 @@
     ./pear on | off    Pear Home, or LG's own Home
     ./pear shot        save a screenshot of the TV to docs/screenshot.jpg
     ./pear uninstall   remove PearWebOS from the TV
+    ./pear ambilight pull   copy HyperHDR, Hyperk and PicCap settings into ambilight/
 """
 import io
 import json
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +30,11 @@ sys.path.insert(0, os.path.join(HERE, "installer"))
 CONF = os.path.join(HERE, ".pear.json")
 CACHE = os.path.join(HERE, ".cache")
 TV_DIR = "/var/lib/pearwebos"
+# the ambilight that shares the TV (docs/ambilight.md): where its settings live
+AMBILIGHT_DIR = os.path.join(HERE, "ambilight")
+HYPERHDR_DB = "/home/root/.config/HyperHDR/db/hyperhdr.db"
+HYPERHDR_PORT = 8090
+PICCAP_CONF = "/media/developer/apps/usr/palm/services/org.webosbrew.piccap.service/config.json"
 HOOK = "/var/lib/webosbrew/init.d/05-pearwebos"
 # where earlier versions put the hook
 OLD_HOOKS = ["/var/lib/webosbrew/init.d/60-pearwebos"]
@@ -292,6 +299,53 @@ def cmd_shot():
     print(f"Saved {os.path.relpath(dest)}")
 
 
+def http_json(url, payload=None):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"} if data else {})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        return json.load(r)
+
+
+def cmd_ambilight():
+    import ambilight
+    sub = sys.argv[2] if len(sys.argv) > 2 else ""
+    if sub != "pull":
+        sys.exit(f"usage: {PEAR} ambilight pull")
+    conf = load()
+    preflight(conf)
+
+    print("HyperHDR: copying its settings database from the TV...")
+    db = os.path.join(CACHE, "ambilight", "hyperhdr.db")
+    pull(conf, HYPERHDR_DB, db)
+    written = ambilight.export_hyperhdr(db, AMBILIGHT_DIR)
+
+    print("PicCap: reading its config.json...")
+    ambilight.write_json(os.path.join(AMBILIGHT_DIR, "piccap.json"), json.loads(ssh(conf, f"cat {PICCAP_CONF}")))
+    written.append("piccap.json")
+
+    # Hyperk's address: remembered in .pear.json, or found where HyperHDR's
+    # device discovery lists the board by its mDNS name
+    hyperk = conf.get("hyperk")
+    if not hyperk:
+        info = http_json(f"http://{conf['tv']}:{HYPERHDR_PORT}/json-rpc", {"command": "serverinfo", "tan": 1})
+        hyperk = ambilight.hyperk_address(info.get("info", {}).get("sessions"))
+        if hyperk:
+            conf["hyperk"] = hyperk
+            save(conf)
+    if hyperk:
+        print(f"Hyperk: reading the board's config at {hyperk}...")
+        try:
+            pulled = http_json(f"http://{hyperk}/api/get_current_config")
+            ambilight.write_json(os.path.join(AMBILIGHT_DIR, "hyperk.json"), ambilight.hyperk_for_repo(pulled))
+            written.append("hyperk.json")
+        except OSError as e:
+            print(f"  (skipped: the board did not answer at {hyperk}: {e})")
+    else:
+        print("Hyperk: not found by HyperHDR's discovery; set \"hyperk\" to the board's IP in .pear.json")
+
+    print(f"Wrote {len(written)} files under {os.path.relpath(AMBILIGHT_DIR)}/ ; `git diff` shows what changed.")
+
+
 def cmd_uninstall():
     conf = load()
     preflight(conf)
@@ -305,6 +359,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     try:
         {"setup": cmd_setup, "sync": cmd_sync, "shot": cmd_shot, "uninstall": cmd_uninstall,
+         "ambilight": cmd_ambilight,
          "status": lambda: cmd_simple("status"), "on": lambda: cmd_simple("on"),
          "off": lambda: cmd_simple("off")}.get(cmd, lambda: print(__doc__.replace("./pear", PEAR)))()
     except KeyboardInterrupt:
