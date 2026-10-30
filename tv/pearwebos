@@ -19,12 +19,21 @@
 #   pearwebos status
 #   pearwebos settings  the power-on settings chosen in setup
 #   pearwebos unmount   before replacing the files (the installer)
+#
+# Two ways Pear stays off at boot, kept apart so status can say which:
+#  - $OFF: you ran `off`. Only `on` clears it.
+#  - $FAILED: Home died with Pear mounted. One line per failed boot; boot
+#    tries again until $MAX_FAILS lines have piled up, so one slow boot
+#    (other startup hooks, a busy TV) can't switch Pear off for good.
+#    `on` or a good boot clears it.
 
 DIR=/var/lib/pearwebos
 APP=/usr/palm/applications/com.webos.app.home/qml
 CKPT=/mnt/lg/cmn_data/checkpoint/com.webos.app.home
 STAMP=$DIR/checkpoint.stamp
 OFF=$DIR/disabled
+FAILED=$DIR/failed
+MAX_FAILS=3
 LOG=$DIR/pearwebos.log
 LS=$DIR/luna-send-n
 
@@ -83,14 +92,40 @@ cold_start() {
     [ -n "$(home_pid)" ]
 }
 
-# After cold_start: wait (up to 30s) for the app manager to snapshot the new
-# Home, let it finish writing, and check Home stayed up. Only the stamp needs
-# this, so on boot it runs after Pear is already on screen.
+# After cold_start: wait (up to $1 seconds, default 30) for the app manager to
+# snapshot the new Home, let it finish writing, and check Home stayed up.
+# Only the stamp needs this, so on boot it runs after Pear is already on
+# screen.
+#   0  Home is up and snapshotted
+#   1  Home is gone: it died with Pear mounted
+#   2  Home is up but no snapshot yet. Not a Pear failure: the app manager
+#      snapshots late, or not at all, on a busy or low-memory TV.
 wait_snapshot() {
     i=0
-    while [ ! -d "$CKPT" ] && [ $i -lt 30 ]; do sleep 1; i=$((i + 1)); done
+    while [ ! -d "$CKPT" ] && [ $i -lt "${1:-30}" ]; do sleep 1; i=$((i + 1)); done
     sleep 8
-    [ -n "$(home_pid)" ] && [ -d "$CKPT" ]
+    [ -n "$(home_pid)" ] || return 1
+    [ -d "$CKPT" ] || return 2
+    return 0
+}
+
+# What else is going on, for the log when something goes wrong: free memory,
+# and the screen-capture / ambient-light services known to share the TV.
+context() {
+    avail=$(awk '/^MemAvailable:/ {print int($2 / 1024) "MB"}' /proc/meminfo 2>/dev/null)
+    others=$(ps -eo args | grep -i -e '[h]yperhdr' -e '[p]iccap' -e '[h]yperion' |
+             awk '{print $1}' | sed 's|.*/||' | sort -u | tr '\n' ' ')
+    echo "mem available ${avail:-?}; also running: ${others:-none}"
+}
+
+fail_count() { [ -f "$FAILED" ] && wc -l < "$FAILED" | tr -d ' ' || echo 0; }
+
+# Home died with Pear mounted: back to stock, and note it for the next boot
+give_up() {
+    log "$1; back to stock ($(context))"
+    "$DIR/homeguard" stop
+    go_stock
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$FAILED"
 }
 
 # true when nothing but Live TV (or nothing) is in front
@@ -107,24 +142,30 @@ go_stock() {
 }
 
 cmd_on() {
-    rm -f "$OFF"
+    rm -f "$OFF" "$FAILED"
     # remount: a replaced file is a new inode, and a mount keeps the old one
     umount_all
     mount_all
-    if cold_start && wait_snapshot; then
-        pear_id > "$STAMP"
-        guard start
-        log "on: Pear Home up (snapshot $(cat "$STAMP"))"
-    else
-        log "on: Home did not stay up with Pear; back to stock"
-        go_stock
-        touch "$OFF"
+    if ! cold_start; then
+        give_up "on: no Home came up with Pear"
         return 1
     fi
+    wait_snapshot
+    case $? in
+        0) pear_id > "$STAMP"
+           guard start
+           log "on: Pear Home up (snapshot $(cat "$STAMP"))" ;;
+        2) rm -f "$STAMP"
+           guard start
+           log "on: Pear Home up, but no snapshot yet ($(context)); the next boot rebuilds it" ;;
+        *) give_up "on: Home did not stay up with Pear"
+           return 1 ;;
+    esac
 }
 
 cmd_off() {
     touch "$OFF"
+    rm -f "$FAILED"
     "$DIR/homeguard" stop
     go_stock
     log "off: stock Home"
@@ -146,6 +187,12 @@ boot_settings() {
 
 cmd_boot() {
     [ -f "$OFF" ] && { log "boot: off"; return 0; }
+    if [ "$(fail_count)" -ge "$MAX_FAILS" ]; then
+        log "boot: Home failed with Pear on the last $MAX_FAILS tries; staying stock. Run 'pear on' to try again."
+        return 0
+    fi
+    # an older version marked a failed boot with $OFF itself; the log tells them
+    # apart from a real `off`, and `pear on` clears either
     mount_all
     # Pear first, so the stock Home is on screen as briefly as possible
     if [ -f "$STAMP" ] && [ "$(pear_id)" = "$(cat "$STAMP")" ]; then
@@ -157,30 +204,44 @@ cmd_boot() {
     log "boot: Home is stock ($(pear_id)); rebuilding with Pear"
     # files were mounted just above, so no remount; Pear is on screen as soon
     # as cold_start returns, and homeguard starts watching right away
-    if cold_start; then
-        guard start
-    fi
-    # bookkeeping, off the visible path
-    if wait_snapshot; then
-        pear_id > "$STAMP"
-        log "boot: Pear Home up (snapshot $(cat "$STAMP"))"
-        # Home is an overlay; if LG left only Live TV in front, bring Home up.
-        # Don't yank the user out of an app they opened meanwhile.
-        [ "$BOOT_TO_HOME" = 1 ] && front_is_bare && open_home
-    else
-        log "boot: Home did not stay up with Pear; back to stock"
-        "$DIR/homeguard" stop
-        go_stock
-        touch "$OFF"
+    if ! cold_start; then
+        give_up "boot: no Home came up with Pear"
+        boot_settings
         return 1
     fi
+    guard start
+    # bookkeeping, off the visible path. Boot is when other startup hooks
+    # (HyperHDR, PicCap and the like) compete for the TV, so give the app
+    # manager longer to snapshot than `on` does.
+    wait_snapshot 90
+    case $? in
+        0) pear_id > "$STAMP"
+           rm -f "$FAILED"
+           log "boot: Pear Home up (snapshot $(cat "$STAMP"))" ;;
+        2) rm -f "$STAMP" "$FAILED"
+           log "boot: Pear Home up, but no snapshot after 90s ($(context)); keeping Pear, the next boot rebuilds it" ;;
+        *) give_up "boot: Home did not stay up with Pear (try $(($(fail_count) + 1)) of $MAX_FAILS)"
+           boot_settings
+           return 1 ;;
+    esac
+    # Home is an overlay; if LG left only Live TV in front, bring Home up.
+    # Don't yank the user out of an app they opened meanwhile.
+    [ "$BOOT_TO_HOME" = 1 ] && front_is_bare && open_home
     boot_settings
 }
 
 cmd_status() {
-    [ -f "$OFF" ] && echo "state: off" || echo "state: on"
+    if [ -f "$OFF" ]; then
+        echo "state: off (pear off, or a failed boot before this version; 'pear on' clears it)"
+    elif [ "$(fail_count)" -ge "$MAX_FAILS" ]; then
+        echo "state: on, but staying stock after $(fail_count) failed boots; 'pear on' retries"
+    else
+        echo "state: on"
+    fi
+    [ -f "$FAILED" ] && sed 's/^/  failed: /' "$FAILED"
     echo "home pid: $(home_pid)"
     echo "running: $(pear_id)  pear: $(cat "$STAMP" 2>/dev/null)"
+    echo "context: $(context)"
     for f in $(pear_files); do
         mounted "$APP/$f" && echo "  mounted  $f" || echo "  -        $f"
     done

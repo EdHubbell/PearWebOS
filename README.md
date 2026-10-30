@@ -116,6 +116,7 @@ On Windows, type `python3 pear` in place of `./pear`.
 ./pear status      what is mounted and running
 ./pear on | off    Pear Home, or LG's own
 ./pear shot        screenshot the TV to docs/screenshot.jpg
+./pear doctor      read-only report for troubleshooting (logs, startup hooks, memory)
 ./pear uninstall   remove PearWebOS from the TV
 ```
 
@@ -137,6 +138,11 @@ On the TV everything lives in `/var/lib/pearwebos`, and a Homebrew Channel start
 - **A full reboot**, such as after a power cut, starts with LG's stock Home for a few seconds before Pear takes over: LG's boot image holds its own Home, so Pear has to restart it. With Quick Start+ on, ordinary power-ons resume straight into Pear.
 - **OLED TVs** that sit on Home: quiet mode leaves less on screen, which is kinder to the panel.
 - **If Pear's Home fails to load**, LG's Home shows instead, with the reason in small text in the bottom-left corner.
+- **If Home crashes with Pear at boot**, that boot falls back to LG's Home and the next one tries again; after three failed boots in a row Pear stays off until `./pear on`. A slow boot on a busy TV (screen-capture or ambient-light services starting too) no longer counts as a failure. `./pear status` says which state it's in, and `./pear doctor` gathers what's needed to see why.
+
+## Ambient lighting
+
+This TV also runs a DIY ambilight (HyperHDR and PicCap on the TV, an ESP32-S3 over USB): see [docs/ambilight.md](docs/ambilight.md).
 
 ## Pairs well with
 

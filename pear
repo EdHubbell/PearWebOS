@@ -6,6 +6,7 @@
     ./pear status      what is mounted and running on the TV
     ./pear on | off    Pear Home, or LG's own Home
     ./pear shot        save a screenshot of the TV to docs/screenshot.jpg
+    ./pear doctor      read-only report: logs, startup hooks, memory, other services
     ./pear uninstall   remove PearWebOS from the TV
 """
 import io
@@ -292,6 +293,57 @@ def cmd_shot():
     print(f"Saved {os.path.relpath(dest)}")
 
 
+# Everything worth knowing when Pear and something else on the TV disagree
+# (HyperHDR, PicCap, other startup hooks): read-only, safe to run any time.
+DOCTOR = r"""
+D=/var/lib/pearwebos
+sec() { echo; echo "== $*"; }
+sec "system"
+grep -o '"webos_release": *"[^"]*"' /var/run/nyx/os_info.json 2>/dev/null
+uptime
+awk '/^(MemTotal|MemAvailable|SwapFree):/' /proc/meminfo
+sec "pear status"
+[ -x $D/pearwebos ] && $D/pearwebos status 2>&1 || echo "pearwebos not installed"
+for f in disabled failed allow-livetv debug pear.conf checkpoint.stamp; do
+    [ -f $D/$f ] && { echo "-- $f:"; cat $D/$f; }
+done
+sec "startup hooks, in the order they run"
+ls -la /var/lib/webosbrew/init.d
+for h in /var/lib/webosbrew/init.d/*; do echo "-- $h"; head -c 1500 "$h"; echo; done
+sec "other mounts over LG Home"
+grep com.webos.app.home /proc/mounts
+sec "foreground"
+$D/luna-send-n -n 1 luna://com.webos.applicationManager/getForegroundAppInfo '{"extraInfo":true}' 2>&1 | head -c 2000
+sec "home, capture and ambient-light processes"
+ps -eo pid,args | grep -i -e '[c]om.webos.app.home' -e '[h]yperhdr' -e '[p]iccap' -e '[h]yperion' -e '[h]omeguard'
+sec "biggest processes (MB resident)"
+for p in /proc/[0-9]*; do
+    r=$(awk '/^VmRSS:/ {print int($2 / 1024)}' $p/status 2>/dev/null)
+    [ -n "$r" ] && [ "$r" -gt 20 ] && echo "$r $(tr '\0' ' ' < $p/cmdline 2>/dev/null | cut -c1-90)"
+done | sort -rn | head -15
+sec "kernel: out of memory, killed processes"
+dmesg 2>/dev/null | grep -i -e 'out of memory' -e 'killed process' -e 'lowmem' -e 'oom' | tail -20
+sec "usb serial (ambilight)"
+ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || echo "no USB serial devices"
+sec "pearwebos.log"
+tail -n 60 $D/pearwebos.log 2>/dev/null
+sec "homeguard.log"
+tail -n 40 $D/homeguard.log 2>/dev/null
+"""
+
+
+def cmd_doctor():
+    conf = load()
+    preflight(conf)
+    out = ssh(conf, DOCTOR, check=False)
+    print(out.rstrip())
+    os.makedirs(CACHE, exist_ok=True)
+    path = os.path.join(CACHE, "doctor.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(out)
+    print(f"\nSaved to {os.path.relpath(path)}")
+
+
 def cmd_uninstall():
     conf = load()
     preflight(conf)
@@ -305,6 +357,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     try:
         {"setup": cmd_setup, "sync": cmd_sync, "shot": cmd_shot, "uninstall": cmd_uninstall,
+         "doctor": cmd_doctor,
          "status": lambda: cmd_simple("status"), "on": lambda: cmd_simple("on"),
          "off": lambda: cmd_simple("off")}.get(cmd, lambda: print(__doc__.replace("./pear", PEAR)))()
     except KeyboardInterrupt:
