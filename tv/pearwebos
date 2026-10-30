@@ -16,6 +16,10 @@
 # with the same pid every time, and leaves the snapshot on disk untouched, so
 # a stamp written by one boot's rebuild would otherwise match the stock Home
 # of the next boot too, and Pear would never come up again after a reboot.
+# The boot is told by $BOOTMARK: /tmp is a tmpfs that every boot wipes, LG's
+# image restore included (the kernel's own boot_id survives that, so it is
+# no use here). Pear writes the mark when it starts Home; after a boot it is
+# gone, and nothing running can be Pear's.
 #
 #   pearwebos on      mount, cold-start Home, check it came up
 #   pearwebos off     unmount, cold-start stock Home, and stay off at boot
@@ -28,6 +32,7 @@ DIR=/var/lib/pearwebos
 APP=/usr/palm/applications/com.webos.app.home/qml
 CKPT=/mnt/lg/cmn_data/checkpoint/com.webos.app.home
 STAMP=$DIR/checkpoint.stamp
+BOOTMARK=/tmp/pearwebos.boot
 OFF=$DIR/disabled
 LOG=$DIR/pearwebos.log
 LS=$DIR/luna-send-n
@@ -63,10 +68,15 @@ umount_all() {
 
 home_pid() { ps -eo pid,args | grep '[/]usr/bin/com.webos.app.home' | awk '{print $1}' | head -1; }
 
+# the mark of this boot, made when Pear first stamps a Home in it; "-" if
+# Pear has not started a Home since the TV booted
+boot_mark() { cat "$BOOTMARK" 2>/dev/null || echo -; }
+new_boot_mark() { [ -f "$BOOTMARK" ] || echo "$(date +%s)-$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo $$)" > "$BOOTMARK"; }
+
 # which Home this is: its pid (kept across CRIU restores), the snapshot, and
-# the boot it belongs to (a new random id every time the kernel starts)
-boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo "?"; }
-pear_id() { echo "$(home_pid) $([ -d "$CKPT" ] && stat -c '%Y-%i' "$CKPT" 2>/dev/null) $(boot_id)"; }
+# the boot it was started in
+pear_id() { echo "$(home_pid) $([ -d "$CKPT" ] && stat -c '%Y-%i' "$CKPT" 2>/dev/null) $(boot_mark)"; }
+stamp() { new_boot_mark; pear_id > "$STAMP"; }
 
 open_home() { $LS -n 1 luna://com.webos.applicationManager/launch '{"id":"com.webos.app.home"}' >/dev/null; }
 
@@ -118,7 +128,7 @@ cmd_on() {
     umount_all
     mount_all
     if cold_start && wait_snapshot; then
-        pear_id > "$STAMP"
+        stamp
         guard start
         log "on: Pear Home up (snapshot $(cat "$STAMP"))"
     else
@@ -168,7 +178,7 @@ cmd_boot() {
     fi
     # bookkeeping, off the visible path
     if wait_snapshot; then
-        pear_id > "$STAMP"
+        stamp
         log "boot: Pear Home up (snapshot $(cat "$STAMP"))"
         # Home is an overlay; if LG left only Live TV in front, bring Home up.
         # Don't yank the user out of an app they opened meanwhile.
