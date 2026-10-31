@@ -1,7 +1,35 @@
 # Handoff: strip stays lit after the TV turns off
 
 From a planning conversation with Claude, for the Claude Code session on this
-branch. Nothing here has been tried on the TV yet.
+branch. Written before anything was tried on the TV; the outcome is below,
+the plan as handed over follows it.
+
+## Outcome (2026-10-31)
+
+Measured with a power-state logger on the TV and a poller on the board:
+
+- The power state stays `"Active"` through the whole power-off sequence
+  (`processing` goes "Request Power Off" → "Request Active Standby" →
+  "Prepare Suspend" over 3 s); `"Suspend"` is only reported after the TV is
+  asleep. The loader keys on `state` alone, so it never stopped HyperHDR at
+  power-off: no black frames, no goodbye. On the screensaver it does.
+- The board's USB power is cut 6 to 10 s after the Power press.
+- Hyperk falls back to its idle color 6.5 s after the stream ends (README;
+  confirmed by stopping HyperHDR through the loader). That is longer than
+  the window, so the step 2 plan (send black, or any frame, then wait for
+  the idle color) could not win either.
+- HyperHDR's `color` command at priority 1 with a `duration` takes 8 ms and
+  keeps the stream at 45 fps, so the strip ends up holding that color.
+
+Built: `tv/ambilightguard` (own Homebrew hook, `./pear ambilight install`),
+which on "Request Power Off" sends Hyperk's idle color through the running
+HyperHDR. The strip turns orange within a fraction of a second of the Power
+press. Remaining hardware issue: the ESP32 sometimes restarts on the dying
+USB rail far enough to clear the strip; a voltage supervisor on EN is the
+fix (`docs/ambilight.md`, Wiring). The step 3 relay is not needed: the
+idle color must stay on, so the strip's supply stays on.
+
+PR #1 was closed and its branch deleted before this handoff.
 
 ## The problem
 

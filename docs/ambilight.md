@@ -11,8 +11,9 @@ commit 5385ac7); the apps themselves were never the problem.
 | | Runs on | Job | Starts |
 |---|---|---|---|
 | **PicCap** | TV | Grabs the picture 30 times a second and hands frames to HyperHDR over a local socket | At boot (its `autostart`) |
-| **HyperHDR** | TV | Turns each frame into 200 LED colors and sends them out the USB port | At boot, by its loader service, which stops it when the TV sleeps and restarts it on wake |
-| **Hyperk** | ESP32-S3 | Paints the strip with what HyperHDR sends | When the board has power |
+| **HyperHDR** | TV | Turns each frame into 220 LED colors and sends them out the USB port | At boot, by its loader service, which stops it on the screensaver and restarts it on wake |
+| **Hyperk** | ESP32-S3 | Paints the strip with what HyperHDR sends; shows its own idle color 6.5 s after the stream stops | When the board has power |
+| **ambilightguard** | TV | At power-off, has HyperHDR show Hyperk's idle color before the board loses USB power | At boot, by its own Homebrew hook (`./pear ambilight install`) |
 
 **Lights on or off.** HyperHDR's web page, `http://<tv-ip>:8090`, Remote
 Control, the "LED device" switch: off blanks the strip, on brings it back at
@@ -20,12 +21,40 @@ once. From the TV remote, the PicCap app's Stop and Start do the same and
 also save TV CPU. The HyperHDR loader app on the TV never needs opening; its
 Reboot button reboots the whole TV.
 
-**Sleep and wake.** On the screensaver and on standby the loader stops
-HyperHDR and starts a fresh one on wake, which reopens the serial port and
-redoes the handshake within a minute. The board keeps USB power through the
-screensaver but loses it in standby, reboots on wake, and is ready before
-HyperHDR asks for it. No manual step is needed in either case (tested
-2026-10-30).
+**Sleep and wake.** On the screensaver the loader stops HyperHDR (it
+watches the power state and stops HyperHDR on anything but "Active"), and
+starts a fresh one on wake. The board keeps USB power through the
+screensaver, so 6.5 s after the stream ends Hyperk shows its own idle color.
+
+Standby is different, and it is why the strip used to freeze on the last
+picture (measured 2026-10-31, see `docs/ambilight-shutdown-handoff.md`):
+
+- The power state stays "Active" all through the power-off sequence; the
+  "Suspend" state only arrives once the TV is already asleep. So the loader
+  never stops HyperHDR at power-off and no black frame is sent.
+- The TV cuts the board's USB power about 6 s after the Power press. Hyperk's
+  6.5 s idle timer never fires, and SK6812s hold their last frame.
+
+`ambilightguard` closes that gap: it watches the power state and, on
+"Request Power Off", tells the still-running HyperHDR to show Hyperk's idle
+color (read from the board over Wi-Fi, last value cached). HyperHDR keeps
+sending it until the power goes, so the strip holds the idle color. One
+color is set in one place, Hyperk's web page. The guard is its own
+Homebrew startup hook, nothing of Pear's: `./pear ambilight install`,
+`status`, `uninstall`. Source: `tv/ambilightguard`, tests in
+`tests/test_ambilightguard.py` (run under `dash`).
+
+Still open: as the USB power dies the ESP32 browns out and sometimes
+restarts on the collapsing rail far enough to clear the strip, so the held
+color is lost on some power-offs and kept on others. The fix is a voltage
+supervisor on EN (see Wiring) and a 10 kΩ pull-down on DIN. Feeding the
+board 5 V from the LED supply also cures it, but on this board the strip
+flickered with both supplies connected.
+
+**After a wake** HyperHDR starts before the board has finished booting. With
+"Maximum number of retries" at 0 one failed open switches the LED device off
+for good; HyperHDR's Remote Control (or `componentstate` over JSON-RPC) turns
+it back on. A retry count of about 10 would cover this.
 
 ## Signal chain
 
@@ -89,6 +118,16 @@ on 2026-10-18. After reflashing a fixed build, either port should work.
   the 5V pin unconnected so the LED supply never feeds the TV's USB port.
 - Avoid GPIO 0, 3, 45, 46 (boot straps), 19/20 (USB), 26–37 (flash and
   octal PSRAM on N16R8), 43/44 (UART), 48 (onboard RGB LED).
+- Planned: a voltage supervisor on EN so the board cannot restart as the
+  USB power dies and clear the strip (see Sleep and wake). MAX809S, TLV803S
+  or APX803L-44 (4.4 V threshold; not the 4.63 V parts, a loaded USB port
+  can sit near 4.75 V): VDD to the 5V pin, GND to ground, RESET to EN,
+  100 nF across VDD/GND. The board's 10 kΩ pull-up on EN suits the
+  open-drain output. Plus 10 kΩ from the shifter's B1 (strip DIN) to GND so
+  a floating line reads as "no data".
+- Powering the board from the LED supply's 5 V with the USB cable still in
+  made the strip flicker (2026-10-31); reverted. A loose ground jumper gives
+  the same symptom, single pixels wrong then correcting themselves.
 - Hyperk issue #79 (S3 fails to boot after power loss with LEDs on GPIO 4)
   only affected a board flashed over WLED's OTA update. This board was
   flashed with the official installer, so it does not apply.
@@ -114,9 +153,13 @@ on 2026-10-18. After reflashing a fixed build, either port should work.
 1. Flash from Chrome or Edge at https://hyperk.hyperhdr.org, using the
    board's COM/UART port, ESP32-S3 build.
 2. Join it to Wi-Fi and open its web page (`http://hyperk.local`).
-3. LED type SK6812 RGBW (neutral), count 200, data pin GPIO 4, driver SPI
+3. LED type SK6812 RGBW (neutral), count 220, data pin GPIO 4, driver SPI
    bitbang (DMA) first (RMT can flood interrupts). Serial port speed
    2000000 under Network & Serial.
+4. The idle color (`r`, `g`, `b` in its config) is what the strip shows
+   whenever no stream is coming in, and what `ambilightguard` hands the
+   strip at power-off. Set it once here for a holiday color; `./pear
+   ambilight pull` records it in `ambilight/hyperk.json`.
 
 ## HyperHDR (on the TV, http://<tv-ip>:8090)
 
@@ -129,8 +172,10 @@ debug `file` output before, which is why nothing reached the board):
 - Force HyperSerial detection: on
 - RGB byte order rgb; RGBW dithering and white calibration off until the
   strip is wired and can be judged
-- Maximum number of retries 0. The loader's restart on wake covers sleep;
-  a small retry count would also cover a board hiccup mid-session.
+- Maximum number of retries 0. Too low: after a wake HyperHDR opens the
+  port before the board has finished booting, fails once and leaves the
+  LED device off (seen 2026-10-31). About 10 would cover it. Until then,
+  Remote Control → LED device on, or `./pear ambilight status` to check.
 
 ## Is it working?
 
@@ -143,5 +188,17 @@ debug `file` output before, which is why nothing reached the board):
    (`LIVE` 2).
 4. HyperHDR Remote Control: set a solid color. Strip lights = HyperHDR →
    ESP32 → LEDs works. Solid color works but video doesn't = PicCap side.
+   Single pixels wrong then correcting themselves while a solid color is
+   up = a loose ground or data jumper, not software.
+5. `./pear ambilight status`: the guard is running and knows the idle
+   color. Press Power: the strip turns that color at once and keeps it
+   after the board's LED goes out.
 
-Steps 1 to 3 passed on 2026-10-30 with the strip not yet wired.
+Steps 1 to 3 passed on 2026-10-30 with the strip not yet wired; 4 and 5 on
+2026-10-31 with the strip on the bench.
+
+Do not `kill -9` HyperHDR on the TV: it leaves `/tmp/hyperhdr-domain`
+behind and every HyperHDR after that fails to bind it, so PicCap shows
+`"connected": false` and the strip stops tracking. Stop and start it through
+the loader (`luna://org.webosbrew.hyperhdr.loader.service/stop` and
+`/start`); if it has happened, remove the socket file and restart.

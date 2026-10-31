@@ -8,6 +8,8 @@
     ./pear shot        save a screenshot of the TV to docs/screenshot.jpg
     ./pear uninstall   remove PearWebOS from the TV
     ./pear ambilight pull   copy HyperHDR, Hyperk and PicCap settings into ambilight/
+    ./pear ambilight install | uninstall | status
+                       the guard that gives the strip its idle color at power-off
 """
 import io
 import json
@@ -35,6 +37,8 @@ AMBILIGHT_DIR = os.path.join(HERE, "ambilight")
 HYPERHDR_DB = "/home/root/.config/HyperHDR/db/hyperhdr.db"
 HYPERHDR_PORT = 8090
 PICCAP_CONF = "/media/developer/apps/usr/palm/services/org.webosbrew.piccap.service/config.json"
+GUARD_DIR = "/var/lib/ambilightguard"
+GUARD_HOOK = "/var/lib/webosbrew/init.d/60-ambilightguard"
 HOOK = "/var/lib/webosbrew/init.d/05-pearwebos"
 # where earlier versions put the hook
 OLD_HOOKS = ["/var/lib/webosbrew/init.d/60-pearwebos"]
@@ -306,14 +310,33 @@ def http_json(url, payload=None):
         return json.load(r)
 
 
-def cmd_ambilight():
+def hyperk_address(conf):
+    """The board's address: remembered in .pear.json, or found where HyperHDR's
+    device discovery lists it by its mDNS name; None when neither knows."""
     import ambilight
+    hyperk = conf.get("hyperk")
+    if not hyperk:
+        info = http_json(f"http://{conf['tv']}:{HYPERHDR_PORT}/json-rpc", {"command": "serverinfo", "tan": 1})
+        hyperk = ambilight.hyperk_address(info.get("info", {}).get("sessions"))
+        if hyperk:
+            conf["hyperk"] = hyperk
+            save(conf)
+    return hyperk
+
+
+def cmd_ambilight():
     sub = sys.argv[2] if len(sys.argv) > 2 else ""
-    if sub != "pull":
-        sys.exit(f"usage: {PEAR} ambilight pull")
+    cmds = {"pull": ambilight_pull, "install": ambilight_install,
+            "uninstall": ambilight_uninstall, "status": ambilight_status}
+    if sub not in cmds:
+        sys.exit(f"usage: {PEAR} ambilight pull | install | uninstall | status")
     conf = load()
     preflight(conf)
+    cmds[sub](conf)
 
+
+def ambilight_pull(conf):
+    import ambilight
     print("HyperHDR: copying its settings database from the TV...")
     db = os.path.join(CACHE, "ambilight", "hyperhdr.db")
     pull(conf, HYPERHDR_DB, db)
@@ -323,15 +346,7 @@ def cmd_ambilight():
     ambilight.write_json(os.path.join(AMBILIGHT_DIR, "piccap.json"), json.loads(ssh(conf, f"cat {PICCAP_CONF}")))
     written.append("piccap.json")
 
-    # Hyperk's address: remembered in .pear.json, or found where HyperHDR's
-    # device discovery lists the board by its mDNS name
-    hyperk = conf.get("hyperk")
-    if not hyperk:
-        info = http_json(f"http://{conf['tv']}:{HYPERHDR_PORT}/json-rpc", {"command": "serverinfo", "tan": 1})
-        hyperk = ambilight.hyperk_address(info.get("info", {}).get("sessions"))
-        if hyperk:
-            conf["hyperk"] = hyperk
-            save(conf)
+    hyperk = hyperk_address(conf)
     if hyperk:
         print(f"Hyperk: reading the board's config at {hyperk}...")
         try:
@@ -344,6 +359,37 @@ def cmd_ambilight():
         print("Hyperk: not found by HyperHDR's discovery; set \"hyperk\" to the board's IP in .pear.json")
 
     print(f"Wrote {len(written)} files under {os.path.relpath(AMBILIGHT_DIR)}/ ; `git diff` shows what changed.")
+
+
+def ambilight_install(conf):
+    """Put tv/ambilightguard on the TV with its own startup hook and start it.
+    Nothing of Pear's is involved: it stays if Pear is uninstalled."""
+    hyperk = hyperk_address(conf)
+    if not hyperk:
+        sys.exit("The board's address is needed: set \"hyperk\" to its IP in .pear.json")
+    with open(os.path.join(HERE, "tv", "ambilightguard"), "rb") as f:
+        # LF only, whatever the checkout did: "#!/bin/sh\r" is "not found"
+        script = f.read().replace(b"\r\n", b"\n")
+    print(f"Installing ambilightguard on the TV (board at {hyperk})...")
+    ssh(conf, f"mkdir -p {GUARD_DIR} && cat > {GUARD_DIR}/ambilightguard && chmod 755 {GUARD_DIR}/ambilightguard && "
+              f"echo {hyperk} > {GUARD_DIR}/hyperk && "
+              f"printf '#!/bin/sh\\n# ambilightguard: the LED strip gets its idle color before the TV sleeps\\n"
+              f"{GUARD_DIR}/ambilightguard start\\n' > {GUARD_HOOK} && chmod 755 {GUARD_HOOK} && "
+              f"{GUARD_DIR}/ambilightguard start", stdin=script)
+    ambilight_status(conf)
+
+
+def ambilight_uninstall(conf):
+    print(ssh(conf, f"[ -x {GUARD_DIR}/ambilightguard ] && {GUARD_DIR}/ambilightguard stop; "
+                    f"rm -f {GUARD_HOOK}; rm -rf {GUARD_DIR}; echo 'ambilightguard removed.'", check=False).strip())
+
+
+def ambilight_status(conf):
+    print(ssh(conf, f"if [ -f {GUARD_DIR}/ambilightguard.pid ] && kill -0 $(cat {GUARD_DIR}/ambilightguard.pid) 2>/dev/null; "
+                    f"then echo 'ambilightguard: running, idle color '$(cat {GUARD_DIR}/idle-color 2>/dev/null || echo unknown); "
+                    f"else echo 'ambilightguard: not running'; fi; "
+                    f"[ -f {GUARD_HOOK} ] && echo 'startup hook: {GUARD_HOOK}' || echo 'startup hook: none'; "
+                    f"tail -n 5 {GUARD_DIR}/ambilightguard.log 2>/dev/null | sed 's/^/  /'", check=False).rstrip())
 
 
 def cmd_uninstall():

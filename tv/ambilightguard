@@ -1,0 +1,99 @@
+#!/bin/sh
+# ambilightguard: hand the LED strip its idle color before the TV sleeps.
+#
+# When the TV goes to standby it cuts the board's USB power about six
+# seconds after the Power press. In that time nobody blanks the strip:
+# HyperHDR's loader never stops HyperHDR at power-off (the power state stays
+# "Active" until the TV is already asleep), and Hyperk only falls back to its
+# idle color 6.5 s after the stream ends. So the strip froze on the last
+# picture frame.
+#
+# This watches the TV's power state and, on "Request Power Off", asks the
+# still-running HyperHDR to show Hyperk's idle color. HyperHDR keeps sending
+# it until the power goes, and the strip holds it. The color is read from the
+# board over Wi-Fi and the last good value kept in $CACHE, so a board that is
+# slow to answer does not cost the window.
+#
+# Standalone: its own init.d hook, no PearWebOS dependency. Installed by
+# `pear ambilight install`. $DIR/hyperk holds the board's address.
+#
+# Usage: ambilightguard start|stop|run|event '<power state json>'
+
+DIR=${AMBILIGHTGUARD_DIR:-/var/lib/ambilightguard}
+CONF=$DIR/hyperk
+CACHE=$DIR/idle-color
+LOG=$DIR/ambilightguard.log
+PID=$DIR/ambilightguard.pid
+HYPERHDR=http://127.0.0.1:8090/json-rpc
+# how long HyperHDR keeps the color if the TV does not sleep after all (ms)
+HOLD=30000
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"
+    tail -n 200 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+}
+
+# one number out of Hyperk's config JSON: field "$1" of "$2"
+field() { echo "$2" | tr -d ' \n\r' | grep -o "\"$1\":[0-9]*" | head -n 1 | cut -d: -f2; }
+
+# ask the board for its idle color; keep it in $CACHE when it answers
+refresh_color() {
+    [ -s "$CONF" ] || return 1
+    cfg=$(curl -s -m "${1:-1}" "http://$(cat "$CONF")/api/get_current_config" 2>/dev/null) || return 1
+    r=$(field r "$cfg"); g=$(field g "$cfg"); b=$(field b "$cfg")
+    [ -n "$r" ] && [ -n "$g" ] && [ -n "$b" ] || return 1
+    echo "$r $g $b" > "$CACHE"
+}
+
+# tell HyperHDR to show the cached idle color for $HOLD ms
+send_color() {
+    [ -s "$CACHE" ] || { log "power off, but no idle color known yet; nothing sent"; return 1; }
+    read -r r g b < "$CACHE"
+    curl -s -m 2 -H 'Content-Type: application/json' \
+        -d "{\"command\":\"color\",\"priority\":1,\"color\":[$r,$g,$b],\"duration\":$HOLD,\"origin\":\"ambilightguard\"}" \
+        "$HYPERHDR" >/dev/null 2>&1 && log "power off: HyperHDR showing idle color $r $g $b" ||
+        log "power off: HyperHDR did not take the color (not running?)"
+}
+
+# one line of the power state subscription
+handle() {
+    case "$1" in
+        *'"Request Power Off"'*|*'"Request Active Standby"'*)
+            # the cached color goes first: the window is short
+            send_color
+            # then a fresh read, and a second send when the board says otherwise
+            old=$(cat "$CACHE" 2>/dev/null)
+            refresh_color 1 && [ "$(cat "$CACHE")" != "$old" ] && send_color ;;
+        *'"Screen On"'*)
+            # waking: the board reboots on USB power; read its color once it is up
+            ( sleep 20; refresh_color 3 ) & ;;
+    esac
+}
+
+case "${1:-run}" in
+    event)
+        handle "$2"
+        exit 0 ;;
+    stop)
+        [ -f "$PID" ] && kill "$(cat "$PID")" 2>/dev/null
+        rm -f "$PID"
+        kill $(ps -eo pid,args | grep '[g]etPowerState.*subscribe' | awk '{print $1}') 2>/dev/null
+        exit 0 ;;
+    start)
+        "$0" stop
+        setsid "$0" run </dev/null >/dev/null 2>&1 &
+        exit 0 ;;
+esac
+
+mkdir -p "$DIR"
+echo $$ > "$PID"
+log "started"
+refresh_color 3 || ( sleep 30; refresh_color 3 ) &
+# the subscription ends if the bus restarts; follow it again
+while :; do
+    /usr/bin/luna-send -i luna://com.webos.service.tvpower/power/getPowerState '{"subscribe":true}' 2>/dev/null |
+    while read -r line; do
+        handle "$line"
+    done
+    sleep 5
+done

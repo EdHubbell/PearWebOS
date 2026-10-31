@@ -118,6 +118,8 @@ On Windows, type `python3 pear` in place of `./pear`.
 ./pear shot        screenshot the TV to docs/screenshot.jpg
 ./pear uninstall   remove PearWebOS from the TV
 ./pear ambilight pull   copy HyperHDR, Hyperk and PicCap settings into ambilight/
+./pear ambilight install | uninstall | status
+                   the guard that gives the strip its idle color at power-off
 ```
 
 ## How it works
@@ -141,7 +143,7 @@ On the TV everything lives in `/var/lib/pearwebos`, and a Homebrew Channel start
 
 ## Ambient lighting
 
-This TV also runs a DIY ambilight: HyperHDR and PicCap on the TV, an ESP32-S3 over USB. Its settings are kept in this repo under `ambilight/`, pulled with `./pear ambilight pull`. Wiring, firmware and what each app does: [docs/ambilight.md](docs/ambilight.md).
+This TV also runs a DIY ambilight: HyperHDR and PicCap on the TV, an ESP32-S3 over USB. Its settings are kept in this repo under `ambilight/`, pulled with `./pear ambilight pull`. A small guard on the TV (`./pear ambilight install`, its own startup hook) hands the strip its idle color when the TV is turned off, before the board loses USB power. Wiring, firmware and what each app does: [docs/ambilight.md](docs/ambilight.md).
 
 ## Pairs well with
 
