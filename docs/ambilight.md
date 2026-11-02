@@ -12,7 +12,7 @@ commit 5385ac7); the apps themselves were never the problem.
 |---|---|---|---|
 | **PicCap** | TV | Grabs the picture 30 times a second and hands frames to HyperHDR over a local socket | At boot (its `autostart`) |
 | **HyperHDR** | TV | Turns each frame into 214 LED colors and sends them out the USB port | At boot, by its loader service, which stops it on the screensaver and restarts it on wake |
-| **Hyperk** | ESP32-S3 | Paints the strip with what HyperHDR sends; shows its own idle color 6.5 s after the stream stops | When the board has power |
+| **Hyperk** | ESP32-S3 | Paints the strip with what HyperHDR sends; shows its own idle color 6.5 s after the stream stops | Always: the board runs from the LED supply |
 | **ambilightguard** | TV | At power-off, has HyperHDR show Hyperk's idle color before the board loses USB power | At boot, by its own Homebrew hook (`./pear ambilight install`) |
 
 **Lights on or off.** HyperHDR's web page, `http://<tv-ip>:8090`, Remote
@@ -32,8 +32,9 @@ picture (measured 2026-10-31, see `docs/ambilight-shutdown-handoff.md`):
 - The power state stays "Active" all through the power-off sequence; the
   "Suspend" state only arrives once the TV is already asleep. So the loader
   never stops HyperHDR at power-off and no black frame is sent.
-- The TV cuts the board's USB power about 6 s after the Power press. Hyperk's
-  6.5 s idle timer never fires, and SK6812s hold their last frame.
+- The TV cuts the board's USB power about 6 s after the Power press. While
+  the board ran from the TV's USB (until 2026-11-02), Hyperk's 6.5 s idle
+  timer never fired, and SK6812s hold their last frame.
 
 `ambilightguard` closes that gap: it watches the power state and, on
 "Request Power Off", tells the still-running HyperHDR to show Hyperk's idle
@@ -44,12 +45,13 @@ Homebrew startup hook, nothing of Pear's: `./pear ambilight install`,
 `status`, `uninstall`. Source: `tv/ambilightguard`, tests in
 `tests/test_ambilightguard.py` (run under `dash`).
 
-Still open: as the USB power dies the ESP32 browns out and sometimes
-restarts on the collapsing rail far enough to clear the strip, so the held
-color is lost on some power-offs and kept on others. The fix is a voltage
-supervisor on EN (see Wiring) and a 10 kΩ pull-down on DIN. Feeding the
-board 5 V from the LED supply also cures it, but on this board the strip
-flickered with both supplies connected.
+Since 2026-11-02 the board runs from the LED supply instead of the TV's
+USB (see Wiring), so it keeps running through standby. The stream simply
+stops when the TV sleeps and Hyperk shows the preset by itself 6.5 s
+later; the guard is now a backup that gets the color up a few seconds
+sooner. The brownout restarts that used to clear the strip as the USB
+rail collapsed are gone with it, and the voltage supervisor on EN is no
+longer needed.
 
 **Board hung after a power cut (2026-10-31).** Once, after the strip was
 remounted and the TV had been off, the board came back dead: no Wi-Fi, no
@@ -146,21 +148,20 @@ HyperSerial..." then "Timeout writing data". That is Hyperk issue
 on 2026-10-18. After reflashing a fixed build, either port should work.
 
 **ESP32-S3**
-- Powered from the TV's USB. GPIO 4 → shifter input. GND → common ground.
-  Leave the 5V pin unconnected so the LED supply never feeds the TV's USB
-  port.
+- Powered from the LED supply's 5 V into its 5V pin (since 2026-11-02),
+  on its own wire pair straight from the supply terminals: shared with
+  the strip's feed, the board's LED dims on every surge of strip current.
+  The TV's USB cable carries data only. The DevKitC's diode between the
+  USB connector and the 5V pin is what keeps the supply out of the TV's
+  port. GPIO 4 → shifter input. GND → common ground.
 - Avoid GPIO 0, 3, 45, 46 (boot straps), 19/20 (USB), 26–37 (flash and
   octal PSRAM on N16R8), 43/44 (UART), 48 (onboard RGB LED).
-- Planned: a voltage supervisor on EN so the board cannot restart as the
-  USB power dies and clear the strip (see Sleep and wake). MAX809S, TLV803S
-  or APX803L-44 (4.4 V threshold; not the 4.63 V parts, a loaded USB port
-  can sit near 4.75 V): VDD to the 5V pin, GND to ground, RESET to EN,
-  100 nF across VDD/GND. The board's 10 kΩ pull-up on EN suits the
-  open-drain output. The 10 kΩ pull-down on the shifter's input (below)
-  already makes a floating GPIO 4 read as "no data".
-- Powering the board from the LED supply's 5 V with the USB cable still in
-  made the strip flicker (2026-10-31); reverted. A loose ground jumper gives
-  the same symptom, single pixels wrong then correcting themselves.
+- No longer needed now that the board is on the LED supply: the voltage
+  supervisor on EN (MAX809S / TLV803S / APX803L-44, 4.4 V) that was going
+  to keep a browning-out board from clearing the strip.
+- The flicker seen on 2026-10-31 with the board on the LED supply was a
+  loose ground jumper, not the dual supply: single pixels wrong then
+  correcting themselves.
 - Hyperk issue #79 (S3 fails to boot after power loss with LEDs on GPIO 4)
   only affected a board flashed over WLED's OTA update. This board was
   flashed with the official installer, so it does not apply.
@@ -214,6 +215,14 @@ is off until someone turns it on (retry count 0).
 - Cap HyperHDR at about 4 A per corner (8 A total). Two pairs per corner
   only for uncapped full white.
 - Trim the supply to ~5.1–5.2 V to offset drop; never above 5.3 V.
+- The LRS-100-5 has an audible coil whine at light load (2026-11-02: the
+  strip at 30, 30, 30 plus the board, about 10 W). It faded under full red
+  (about 21 W), so the fix is to keep the idle load up: the Light Preset
+  is 60, 60, 60 (about 19 W, quiet). 85, 85, 85 would draw the same
+  current as full red (three channels at 85 = one at 255). A 10 Ω 5 W resistor across the output would do the
+  same for the same electricity (2.6 W, about $4 a year) and give heat
+  instead of light. If the whine comes back, raise the preset; if it
+  stays at any load, it is the transformer itself, not the load.
 - Corners: solder 5 V, GND and data jumpers between sections; check the
   arrows on the strip.
 - Common ground: supply, strip, shifter and ESP32.
@@ -231,9 +240,10 @@ is off until someone turns it on (retry count 0).
    the strip at power-off (the guard reads it off the board by itself, at
    its start, after every screen-on and at power-off; nothing in the repo
    needs changing). Hyperk 0.0.5 ignores the preset's brightness slider,
-   so dim it with the color values themselves (30, 30, 30 is a soft
-   night-light). Saving reboots the board. `./pear ambilight pull` records
-   the values in `ambilight/hyperk.json`.
+   so dim it with the color values themselves. Set to 60, 60, 60 on
+   2026-11-02: 30, 30, 30 was a softer night-light, but at that load the
+   Mean Well whined (see Power below). Saving reboots the board.
+   `./pear ambilight pull` records the values in `ambilight/hyperk.json`.
 
 ## HyperHDR (on the TV, http://<tv-ip>:8090)
 
