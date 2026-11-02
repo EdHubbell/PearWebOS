@@ -64,10 +64,26 @@ supervisor on EN. If `hyperk.local` is gone and the board's LED is on:
 replug its USB before anything else, then turn HyperHDR's LED device back
 on (Remote Control, or `./pear ambilight status` to check).
 
-**After a wake** HyperHDR starts before the board has finished booting. With
-"Maximum number of retries" at 0 one failed open switches the LED device off
-for good; HyperHDR's Remote Control (or `componentstate` over JSON-RPC) turns
-it back on. A retry count of about 10 would cover this.
+**"LED device: off" in HyperHDR** almost always means "no input", not a
+device fault: HyperHDR switches its LED device off whenever no source is
+active (its log says "New priority[255]" then "LED device: disabled") and
+back on when one appears ("New source available -> switch LED-Device on").
+So when the strip sits on Hyperk's idle color with HyperHDR running, look
+at who is feeding it. The usual culprit (2026-11-02, many times) is PicCap
+after a HyperHDR restart: PicCap keeps reporting `connected: true` on a
+socket connection that died with the old HyperHDR, HyperHDR's
+`FLATBUFSERVER` input never appears, and `grep -c hyperhdr-domain
+/proc/net/unix` on the TV shows 1 (the listener alone) instead of 2. Fix:
+relaunch PicCap, `kill -TERM $(pidof hyperion-webos)` and then any call
+such as `luna-send -n 1 -f luna://org.webosbrew.piccap.service/status '{}'`,
+which makes webOS start the service again; it reconnects within seconds
+and the LED device comes on by itself.
+
+**After a wake or a board reboot** HyperHDR's "Maximum number of retries"
+matters: it is the number of extra opens, 2.5 s apart, after a failed one
+(0 means give up at once; the maximum is 120, about five minutes), and
+with any value above 0 a write failure, such as the board rebooting
+mid-stream, reconnects on its own. Set to 120 on 2026-11-02 (it was 0).
 
 ## Signal chain
 
@@ -210,10 +226,14 @@ is off until someone turns it on (retry count 0).
 3. LED type SK6812 RGBW (neutral), count 220, data pin GPIO 4, driver SPI
    bitbang (DMA) first (RMT can flood interrupts). Serial port speed
    2000000 under Network & Serial.
-4. The idle color (`r`, `g`, `b` in its config) is what the strip shows
-   whenever no stream is coming in, and what `ambilightguard` hands the
-   strip at power-off. Set it once here for a holiday color; `./pear
-   ambilight pull` records it in `ambilight/hyperk.json`.
+4. The idle color is "Light Preset" on its Settings page: what the strip
+   shows whenever no stream is coming in, and what `ambilightguard` hands
+   the strip at power-off (the guard reads it off the board by itself, at
+   its start, after every screen-on and at power-off; nothing in the repo
+   needs changing). Hyperk 0.0.5 ignores the preset's brightness slider,
+   so dim it with the color values themselves (30, 30, 30 is a soft
+   night-light). Saving reboots the board. `./pear ambilight pull` records
+   the values in `ambilight/hyperk.json`.
 
 ## HyperHDR (on the TV, http://<tv-ip>:8090)
 
@@ -226,10 +246,10 @@ debug `file` output before, which is why nothing reached the board):
 - Force HyperSerial detection: on
 - RGB byte order rgb; RGBW dithering and white calibration off until the
   strip is wired and can be judged
-- Maximum number of retries 0. Too low: after a wake HyperHDR opens the
-  port before the board has finished booting, fails once and leaves the
-  LED device off (seen 2026-10-31). About 10 would cover it. Until then,
-  Remote Control → LED device on, or `./pear ambilight status` to check.
+- Maximum number of retries 120 (the maximum; set 2026-11-02, it was 0).
+  Extra opens 2.5 s apart after a failed one, and with any value above 0
+  a write failure reconnects on its own, so a board reboot mid-stream no
+  longer strands the LED device.
 
 ## Is it working?
 
@@ -244,12 +264,12 @@ debug `file` output before, which is why nothing reached the board):
    ESP32 → LEDs works. Solid color works but video doesn't = PicCap side.
    Single pixels wrong then correcting themselves while a solid color is
    up = a loose ground or data jumper, not software. The whole strip
-   sitting on Hyperk's idle color (orange here) = the data path works but
-   nothing is being sent: HyperHDR's LED device is off, almost always
-   after the board was power-cycled with the retry count at 0 (switch it
-   on in Remote Control). The strip frozen on garbage that no color
-   changes = the LEDs are not getting valid data or enough voltage; put a
-   meter on the shifter's 5 V with the strip connected.
+   sitting on Hyperk's idle color = the data path works but nothing is
+   being sent: HyperHDR has no input, almost always PicCap stuck on a dead
+   connection after a HyperHDR restart (see Sleep and wake). The strip
+   frozen on garbage that no color changes = the LEDs are not getting
+   valid data or enough voltage; put a meter on the shifter's 5 V with
+   the strip connected.
 5. `./pear ambilight status`: the guard is running and knows the idle
    color. Press Power: the strip turns that color at once and keeps it
    after the board's LED goes out.
@@ -262,6 +282,13 @@ behind and every HyperHDR after that fails to bind it, so PicCap shows
 `"connected": false` and the strip stops tracking. Stop and start it through
 the loader (`luna://org.webosbrew.hyperhdr.loader.service/stop` and
 `/start`); if it has happened, remove the socket file and restart.
+
+HyperHDR can also come up wedged after a wake (seen 2026-11-02, twice):
+the process exists with only 3 threads, port 8090 is not listening, PicCap
+shows `"connected": false`, and the loader's `stop` does nothing. Fix:
+`kill -TERM $(pidof hyperhdr)`, wait for it to exit, remove the socket
+file if it is still there, then the loader's `start`. Both wedges happened
+while the board was rebooting as HyperHDR started.
 
 ## Debugging the board from the TV
 

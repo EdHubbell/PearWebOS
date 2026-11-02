@@ -4,7 +4,7 @@
   "enable_ice_rgbw": false,
   "espHandshake": true,
   "forceSerialDetection": true,
-  "maxRetry": 0,
+  "maxRetry": 120,
   "output": "ttyACM0",
   "rate": 2000000,
   "refreshTime": 20,
