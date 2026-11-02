@@ -11,7 +11,7 @@ commit 5385ac7); the apps themselves were never the problem.
 | | Runs on | Job | Starts |
 |---|---|---|---|
 | **PicCap** | TV | Grabs the picture 30 times a second and hands frames to HyperHDR over a local socket | At boot (its `autostart`) |
-| **HyperHDR** | TV | Turns each frame into 220 LED colors and sends them out the USB port | At boot, by its loader service, which stops it on the screensaver and restarts it on wake |
+| **HyperHDR** | TV | Turns each frame into 214 LED colors and sends them out the USB port | At boot, by its loader service, which stops it on the screensaver and restarts it on wake |
 | **Hyperk** | ESP32-S3 | Paints the strip with what HyperHDR sends; shows its own idle color 6.5 s after the stream stops | When the board has power |
 | **ambilightguard** | TV | At power-off, has HyperHDR show Hyperk's idle color before the board loses USB power | At boot, by its own Homebrew hook (`./pear ambilight install`) |
 
@@ -51,6 +51,19 @@ supervisor on EN (see Wiring) and a 10 kΩ pull-down on DIN. Feeding the
 board 5 V from the LED supply also cures it, but on this board the strip
 flickered with both supplies connected.
 
+**Board hung after a power cut (2026-10-31).** Once, after the strip was
+remounted and the TV had been off, the board came back dead: no Wi-Fi, no
+`Hyperk-Setup` access point, and HyperHDR logging "Could not detect
+HyperSerial". Its console showed the ROM and bootloader run and the app
+start, then nothing. Resets through EN (HyperHDR's handshake does one on
+every open, and five more by hand) changed nothing, with or without the
+data wire on GPIO 4. Unplugging and replugging the USB cable fixed it at
+once, config intact. So the brownout can leave the board in a state that
+only a full power cycle clears, which is one more reason for the
+supervisor on EN. If `hyperk.local` is gone and the board's LED is on:
+replug its USB before anything else, then turn HyperHDR's LED device back
+on (Remote Control, or `./pear ambilight status` to check).
+
 **After a wake** HyperHDR starts before the board has finished booting. With
 "Maximum number of retries" at 0 one failed open switches the LED device off
 for good; HyperHDR's Remote Control (or `componentstate` over JSON-RPC) turns
@@ -62,7 +75,7 @@ it back on. A retry count of about 10 would cover this.
 PicCap (screen capture on the TV)
   → HyperHDR (on the TV, Adalight driver, AWA protocol, 2 Mb)
   → TV USB → ESP32-S3 running Hyperk (HyperSerial on)
-  → GPIO 4 → TXS0108E level shifter → SK6812 RGBW strip
+  → GPIO 4 → 74AHCT125 level shifter → SK6812 RGBW strip
 ```
 
 ## Settings in this repo
@@ -89,10 +102,10 @@ Pull only, for now. To put a setting back, change it in HyperHDR's web page
 | Part | Choice |
 |---|---|
 | LEDs | SK6812 RGBW, 5 V, neutral white, 60/m |
-| Layout | 3 sides (top, left, right), about 200 LEDs, ~3.4 m |
+| Layout | 3 sides (top, left, right), 214 LEDs as mounted, ~3.6 m |
 | Controller | Hosyond ESP32-S3-WROOM-1 N16R8 (DevKitC-1 pinout) |
 | Firmware | Hyperk (HyperSerialESP32 has no S3 build) |
-| Level shifter | TXS0108E (a 74AHCT125 is the fallback if it glitches) |
+| Level shifter | 74AHCT125 on a small PCB (replaced the TXS0108E on 2026-11-01; see `docs/ambilight-wiring-change-handoff.md`) |
 | Power | 5 V, 15–18 A (e.g. Mean Well LRS-100-5), mounted top center |
 
 TV size without stand: about 172 × 99 cm. Strip runs, inset ~5 cm:
@@ -102,7 +115,10 @@ top ~162 cm (~97 LEDs), each side ~89 cm (~53 LEDs).
 
 **Data** enters at the bottom of the left side, runs up, across the top
 (left to right) and down the right side. One data line. HyperHDR's layout
-matches: 50 LEDs up the left, 100 across the top, 50 down the right.
+matches: 56 LEDs up the left, 102 across the top, 56 down the right (214,
+as mounted on 2026-11-01; the bench layout was 60/100/60). Hyperk's
+`numLeds` is the same 214; the three counts must agree or colors land in
+the wrong place.
 
 **ESP32-S3 to TV: use the board's "COM" USB-C port**, the one behind the
 CH343 bridge. It shows on the TV as `USB Single Serial`, `/dev/ttyACM0`,
@@ -114,8 +130,9 @@ HyperSerial..." then "Timeout writing data". That is Hyperk issue
 on 2026-10-18. After reflashing a fixed build, either port should work.
 
 **ESP32-S3**
-- Powered from the TV's USB. GPIO 4 → shifter. GND → common ground. Leave
-  the 5V pin unconnected so the LED supply never feeds the TV's USB port.
+- Powered from the TV's USB. GPIO 4 → shifter input. GND → common ground.
+  Leave the 5V pin unconnected so the LED supply never feeds the TV's USB
+  port.
 - Avoid GPIO 0, 3, 45, 46 (boot straps), 19/20 (USB), 26–37 (flash and
   octal PSRAM on N16R8), 43/44 (UART), 48 (onboard RGB LED).
 - Planned: a voltage supervisor on EN so the board cannot restart as the
@@ -123,8 +140,8 @@ on 2026-10-18. After reflashing a fixed build, either port should work.
   or APX803L-44 (4.4 V threshold; not the 4.63 V parts, a loaded USB port
   can sit near 4.75 V): VDD to the 5V pin, GND to ground, RESET to EN,
   100 nF across VDD/GND. The board's 10 kΩ pull-up on EN suits the
-  open-drain output. Plus 10 kΩ from the shifter's B1 (strip DIN) to GND so
-  a floating line reads as "no data".
+  open-drain output. The 10 kΩ pull-down on the shifter's input (below)
+  already makes a floating GPIO 4 read as "no data".
 - Powering the board from the LED supply's 5 V with the USB cable still in
   made the strip flicker (2026-10-31); reverted. A loose ground jumper gives
   the same symptom, single pixels wrong then correcting themselves.
@@ -132,15 +149,52 @@ on 2026-10-18. After reflashing a fixed build, either port should work.
   only affected a board flashed over WLED's OTA update. This board was
   flashed with the official installer, so it does not apply.
 
-**TXS0108E**, mounted at the strip's data input, not by the ESP32:
-- VCCA → ESP32 3V3; VCCB → 5 V; OE → VCCA; GND → common.
-- A1 ← GPIO 4 (3.3 V signal run down the wire, twisted with a ground);
-  B1 → strip DIN, a few cm. No series resistor (the TXS drive is weak).
-- Unused A pins to GND. 0.1 µF on each supply pin.
+**74AHCT125** on the PCB, which sits with the ESP32 at the start of the
+strip (one gate used; it reads the ESP32's 3.3 V as high and drives the
+strip at 5 V, so it needs no 3.3 V supply):
+
+| Pin | Connect to |
+|---|---|
+| 14 VCC | 5 V from the LED supply, 0.1 µF to GND at the pin |
+| 7 GND | Common ground |
+| 1 1OE | GND (active low: gate 1 always on) |
+| 2 1A | ESP32 GPIO 4, plus 10 kΩ to GND (GPIO 4 floats while the ESP32 boots) |
+| 3 1Y | 33–100 Ω in series, then the strip's DIN |
+| 4, 10, 13 (unused OE) | 5 V |
+| 5, 9, 12 (unused A) | GND |
+| 6, 8, 11 (unused Y) | No connection |
+
+The series resistor sits at the chip, not at the strip: it is source
+termination for the wire. If the data wire to the strip is long, twist it
+with a ground. The TXS0108E it replaced auto-senses direction and drives
+weakly, which is a poor match for a long data line.
+
+First power-up of the PCB (2026-11-01): the strip froze half white, half
+yellow and ignored every color HyperHDR sent, while the board reported the
+stream at 50 fps. Pin 14 to pin 7 read 1 V with the strip connected and
+4.5 V without: bad solder joints on the PCB were carrying the strip's
+current through a path that could not, and at 1 V the LEDs cannot decode
+data, so they held garbage. Reflowing the joints fixed it. The first
+measurement to make when the strip ignores data is the 5 V at pin 14 with
+the strip connected.
+
+The joints kept failing one after another (2026-11-02) because the PCB
+was wired with breadboard jumper wire, whose strands do not wet with
+solder. Use tinned 22 to 24 AWG stranded hookup wire, tin the end first,
+and leave a loop of slack at each joint. Two more lessons from that night:
+with the TV on its screensaver the loader has stopped HyperHDR, so a meter
+on GPIO 4 reads about 50 mV (the board idling at 4 fps), not the 0.4 V of a
+50 fps stream; and after any power cycle of the board HyperHDR's LED device
+is off until someone turns it on (retry count 0).
 
 **Power**, from the supply at top center:
-- One pair of 22 AWG silicone to each top corner (~1 m each), each fused
-  at 5 A. Sides are fed from their top corner only.
+- One 5 V + GND pair of 22 AWG silicone to each top corner (~1 m each),
+  each 5 V feed fused at 5 A at the supply. Sides are fed from their top
+  corner only. The ground must go to the corners too, or the return current
+  runs along the strip's own ground trace and shifts the data reference
+  (flicker near the input at high brightness).
+- 470–1000 µF / 10 V across 5 V and GND where power enters the strip, on
+  the PCB, for the supply's turn-on inrush.
 - Cap HyperHDR at about 4 A per corner (8 A total). Two pairs per corner
   only for uncapped full white.
 - Trim the supply to ~5.1–5.2 V to offset drop; never above 5.3 V.
@@ -189,7 +243,13 @@ debug `file` output before, which is why nothing reached the board):
 4. HyperHDR Remote Control: set a solid color. Strip lights = HyperHDR →
    ESP32 → LEDs works. Solid color works but video doesn't = PicCap side.
    Single pixels wrong then correcting themselves while a solid color is
-   up = a loose ground or data jumper, not software.
+   up = a loose ground or data jumper, not software. The whole strip
+   sitting on Hyperk's idle color (orange here) = the data path works but
+   nothing is being sent: HyperHDR's LED device is off, almost always
+   after the board was power-cycled with the retry count at 0 (switch it
+   on in Remote Control). The strip frozen on garbage that no color
+   changes = the LEDs are not getting valid data or enough voltage; put a
+   meter on the shifter's 5 V with the strip connected.
 5. `./pear ambilight status`: the guard is running and knows the idle
    color. Press Power: the strip turns that color at once and keeps it
    after the board's LED goes out.
@@ -202,3 +262,27 @@ behind and every HyperHDR after that fails to bind it, so PicCap shows
 `"connected": false` and the strip stops tracking. Stop and start it through
 the loader (`luna://org.webosbrew.hyperhdr.loader.service/stop` and
 `/start`); if it has happened, remove the socket file and restart.
+
+## Debugging the board from the TV
+
+The loader gives HyperHDR no log file. To read its log, stop it through
+the loader and run the same binary in the foreground for half a minute:
+
+```sh
+L=/var/lib/pearwebos/luna-send-n   # Pear's wrapper; the count goes after -n
+S=/media/developer/apps/usr/palm/services/org.webosbrew.hyperhdr.loader.service/hyperhdr
+$L -n 1 luna://org.webosbrew.hyperhdr.loader.service/stop '{}'
+LD_LIBRARY_PATH=$S HOME=/home/root $S/hyperhdr > /tmp/hhdr.log 2>&1 &
+sleep 25; kill $!; sleep 3
+$L -n 1 luna://org.webosbrew.hyperhdr.loader.service/start '{}'
+grep -a LEDDEVICE /tmp/hhdr.log
+```
+
+The board's console is the same port. With HyperHDR stopped, `stty -F
+/dev/ttyACM0 115200 raw -echo` and `cat /dev/ttyACM0` shows the ESP32's
+boot messages; the TV has Python 2.7, and the DTR/RTS reset the flasher
+uses is two `TIOCMSET` ioctls (DTR off and RTS on for 0.25 s, then both
+off), which resets the board without touching it. Always put the speed
+back (`stty -F /dev/ttyACM0 2000000`) and restart HyperHDR through the
+loader afterwards. Do not `pkill -f` by a pattern that is in your own
+command line: busybox matches the ssh shell and kills the session.

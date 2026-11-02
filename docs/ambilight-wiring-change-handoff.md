@@ -6,6 +6,20 @@ loose wiring onto a PCB. `docs/ambilight.md` still describes the TXS0108E;
 update its Signal chain, Hardware table and Wiring sections to match this
 once Eddie confirms the board is built as below.
 
+## Outcome (2026-11-01)
+
+Built as below, PCB and ESP32 together at the start of the strip (bottom
+of the left side), so the data wire is short. `docs/ambilight.md` updated
+(Signal chain, Hardware, Wiring, "Is it working?"). The LED count question
+was already settled: 214 (56 / 102 / 56) in HyperHDR's layout and in
+Hyperk. First power-up: the strip froze half white, half yellow and ignored
+HyperHDR's colors while the board received the stream at 50 fps; the
+AHCT's 5 V read 1 V with the strip connected. Bad solder joints on the PCB.
+After the reflow the strip went black, red, green, blue on command and
+tracks the screen. HyperHDR's "maximum number of retries" at 0 left the
+LED device off after every power cycle of the board that day; raising it
+is still Eddie's call.
+
 ## What changed
 
 - **Level shifter:** 74AHCT125 replaces the TXS0108E. The TXS's weak
