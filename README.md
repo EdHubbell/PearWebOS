@@ -117,9 +117,9 @@ On Windows, type `python3 pear` in place of `./pear`.
 ./pear on | off    Pear Home, or LG's own
 ./pear shot        screenshot the TV to docs/screenshot.jpg
 ./pear uninstall   remove PearWebOS from the TV
-./pear ambilight pull   copy HyperHDR, Hyperk and PicCap settings into ambilight/
+./pear ambilight pull   copy HyperHDR, WLED and PicCap settings into ambilight/
 ./pear ambilight install | uninstall | status
-                   the guard that gives the strip its idle color at power-off
+                   the guard that hands the strip back to WLED at power-off
 ```
 
 ## How it works
@@ -143,7 +143,7 @@ On the TV everything lives in `/var/lib/pearwebos`, and a Homebrew Channel start
 
 ## Ambient lighting
 
-This TV also runs a DIY ambilight: HyperHDR and PicCap on the TV, an ESP32-S3 over USB. Its settings are kept in this repo under `ambilight/`, pulled with `./pear ambilight pull`. A small guard on the TV (`./pear ambilight install`, its own startup hook) hands the strip its idle color when the TV is turned off, before the board loses USB power. Wiring, firmware and what each app does: [docs/ambilight.md](docs/ambilight.md).
+This TV also runs a DIY ambilight: HyperHDR and PicCap on the TV, an ESP32-S3 running WLED over Wi-Fi. Its settings are kept in this repo under `ambilight/`, pulled with `./pear ambilight pull`. The board runs its own effects, chosen on its page, whenever the TV is off; a small guard on the TV (`./pear ambilight install`, its own startup hook) stops HyperHDR cleanly at power-off so the strip goes back to that effect, and starts it again on wake. Wiring, firmware and what each app does: [docs/ambilight.md](docs/ambilight.md).
 
 ## Pairs well with
 

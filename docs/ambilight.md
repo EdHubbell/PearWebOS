@@ -11,90 +11,104 @@ commit 5385ac7); the apps themselves were never the problem.
 | | Runs on | Job | Starts |
 |---|---|---|---|
 | **PicCap** | TV | Grabs the picture 30 times a second and hands frames to HyperHDR over a local socket | At boot (its `autostart`) |
-| **HyperHDR** | TV | Turns each frame into 214 LED colors and sends them out the USB port | At boot, by its loader service, which stops it on the screensaver and restarts it on wake |
-| **Hyperk** | ESP32-S3 | Paints the strip with what HyperHDR sends; shows its own idle color 6.5 s after the stream stops | Always: the board runs from the LED supply |
-| **ambilightguard** | TV | At power-off, has HyperHDR show Hyperk's idle color before the board loses USB power | At boot, by its own Homebrew hook (`./pear ambilight install`) |
+| **HyperHDR** | TV | Turns each frame into 214 LED colors and sends them to the board over Wi-Fi (UDP) | At boot, by its loader service, which stops it on the screensaver and restarts it on wake |
+| **WLED** | ESP32-S3 | Paints the strip with what HyperHDR sends; runs its own effects, chosen on its page, whenever nothing is streaming | Always: the board runs from the LED supply |
+| **ambilightguard** | TV | At power-off stops HyperHDR cleanly and hands the strip back to WLED; on the screensaver does the hand-back; on wake starts HyperHDR again | At boot, by its own Homebrew hook (`./pear ambilight install`) |
 
-**Lights on or off.** HyperHDR's web page, `http://<tv-ip>:8090`, Remote
-Control, the "LED device" switch: off blanks the strip, on brings it back at
-once. From the TV remote, the PicCap app's Stop and Start do the same and
-also save TV CPU. The HyperHDR loader app on the TV never needs opening; its
-Reboot button reboots the whole TV.
+**Effects when the TV is off.** The board's page, `http://192.168.8.248`
+(or `http://wled-tv.local`), is WLED's own: pick an effect, colors, speed
+and brightness, save presets. Four to start with (2026-11-03): 1 Warm
+glow, 2 Candle, 3 Christmas, 4 Off. Preset 1 is applied when the board
+boots. Choose with the TV off: HyperHDR's "restore original state" puts
+the board back to the state it found when the stream began, so a preset
+picked while the TV is on is undone at the next power-off or screensaver
+(the guard's release turns the board on but does not pick a preset). The
+WLED phone app talks to the same page.
 
-**Sleep and wake.** On the screensaver the loader stops HyperHDR (it
-watches the power state and stops HyperHDR on anything but "Active"), and
-starts a fresh one on wake. The board keeps USB power through the
-screensaver, so 6.5 s after the stream ends Hyperk shows its own idle color.
+**Sleep and wake.** HyperHDR's WLED driver locks the board "live" with no
+timeout while it streams (WLED's own return-to-effect timer never runs),
+and releases it when it stops cleanly. So the strip returns to its effect
+only if HyperHDR stops cleanly, and even then there is a race: HyperHDR's
+last UDP frame can land after its "live off" request, leaving the board
+locked on a black frame. `ambilightguard` handles both:
 
-Standby is different, and it is why the strip used to freeze on the last
-picture (measured 2026-10-31, see `docs/ambilight-shutdown-handoff.md`):
+- On the screensaver, and on "Screen Off" (picture off, sound on), the
+  loader stops HyperHDR by itself (it watches the power state and stops
+  HyperHDR on anything but "Active"); the guard waits for the process to
+  go and tells WLED to leave realtime mode and be on
+  (`{"live":false,"on":true}` to `/json/state`). The loader restarts
+  HyperHDR on wake. A HyperHDR that ignores the loader for 5 s gets a
+  `pkill -TERM -x hyperhdr` (never -9: stale socket), because a release
+  while it still streams is undone by its next frame.
+- At power-off nothing stops HyperHDR: the power state stays "Active" all
+  through the power-off sequence ("Suspend" only arrives once the TV is
+  asleep; measured 2026-10-31, `docs/ambilight-shutdown-handoff.md`), so the
+  stream would just die mid-frame. The guard, on "Request Power Off", stops
+  HyperHDR through the loader, waits, and releases the board. HyperHDR's
+  "restore original state" is on, so its clean stop also puts WLED back to
+  the effect that was showing (the state it saw when the stream began).
+- On "Screen On" the guard asks the loader to start HyperHDR: the loader
+  only restarts HyperHDR by itself after stops it made on its own, not
+  after one requested through its API.
 
-- The power state stays "Active" all through the power-off sequence; the
-  "Suspend" state only arrives once the TV is already asleep. So the loader
-  never stops HyperHDR at power-off and no black frame is sent.
-- The TV cuts the board's USB power about 6 s after the Power press. While
-  the board ran from the TV's USB (until 2026-11-02), Hyperk's 6.5 s idle
-  timer never fired, and SK6812s hold their last frame.
-
-`ambilightguard` closes that gap: it watches the power state and, on
-"Request Power Off", tells the still-running HyperHDR to show Hyperk's idle
-color (read from the board over Wi-Fi, last value cached). HyperHDR keeps
-sending it until the power goes, so the strip holds the idle color. One
-color is set in one place, Hyperk's web page. The guard is its own
-Homebrew startup hook, nothing of Pear's: `./pear ambilight install`,
-`status`, `uninstall`. Source: `tv/ambilightguard`, tests in
-`tests/test_ambilightguard.py` (run under `dash`).
+The guard is its own Homebrew startup hook, nothing of Pear's:
+`./pear ambilight install`, `status`, `uninstall`. Source:
+`tv/ambilightguard`, tests in `tests/test_ambilightguard.py` (run under
+`dash`). Its log is `/var/lib/ambilightguard/ambilightguard.log`. Measured
+2026-11-03: power-off to Warm glow in about a second, wake to tracking in
+the TV's normal wake time, screensaver to Warm glow as the loader stops
+HyperHDR, back to tracking about 5 s after a key press.
 
 Since 2026-11-02 the board runs from the LED supply instead of the TV's
-USB (see Wiring), so it keeps running through standby. The stream simply
-stops when the TV sleeps and Hyperk shows the preset by itself 6.5 s
-later; the guard is now a backup that gets the color up a few seconds
-sooner. The brownout restarts that used to clear the strip as the USB
-rail collapsed are gone with it, and the voltage supervisor on EN is no
-longer needed.
+USB (see Wiring), so it keeps running through standby and serves its page
+with the TV off. The brownout restarts that used to clear the strip as the
+USB rail collapsed are gone with it.
 
-**Board hung after a power cut (2026-10-31).** Once, after the strip was
-remounted and the TV had been off, the board came back dead: no Wi-Fi, no
-`Hyperk-Setup` access point, and HyperHDR logging "Could not detect
+**Board hung after a power cut (2026-10-31, under Hyperk).** Once, after
+the strip was remounted and the TV had been off, the board came back dead:
+no Wi-Fi, no setup access point, and HyperHDR logging "Could not detect
 HyperSerial". Its console showed the ROM and bootloader run and the app
-start, then nothing. Resets through EN (HyperHDR's handshake does one on
-every open, and five more by hand) changed nothing, with or without the
-data wire on GPIO 4. Unplugging and replugging the USB cable fixed it at
-once, config intact. So the brownout can leave the board in a state that
-only a full power cycle clears, which is one more reason for the
-supervisor on EN. If `hyperk.local` is gone and the board's LED is on:
-replug its USB before anything else, then turn HyperHDR's LED device back
-on (Remote Control, or `./pear ambilight status` to check).
+start, then nothing. Resets through EN changed nothing. Unplugging and
+replugging the USB cable fixed it at once, config intact. So a brownout can
+leave the board in a state that only a full power cycle clears. If the
+board's page is gone and its LED is on: power-cycle it before anything
+else.
 
 **"LED device: off" in HyperHDR** almost always means "no input", not a
 device fault: HyperHDR switches its LED device off whenever no source is
 active (its log says "New priority[255]" then "LED device: disabled") and
 back on when one appears ("New source available -> switch LED-Device on").
-So when the strip sits on Hyperk's idle color with HyperHDR running, look
-at who is feeding it. The usual culprit (2026-11-02, many times) is PicCap
-after a HyperHDR restart: PicCap keeps reporting `connected: true` on a
-socket connection that died with the old HyperHDR, HyperHDR's
-`FLATBUFSERVER` input never appears, and `grep -c hyperhdr-domain
-/proc/net/unix` on the TV shows 1 (the listener alone) instead of 2. Fix:
-relaunch PicCap, `kill -TERM $(pidof hyperion-webos)` and then any call
-such as `luna-send -n 1 -f luna://org.webosbrew.piccap.service/status '{}'`,
-which makes webOS start the service again; it reconnects within seconds
-and the LED device comes on by itself.
+So when the strip sits on WLED's effect with HyperHDR running, look at who
+is feeding it. The usual culprit (2026-11-02, many times) is PicCap after
+a HyperHDR restart: PicCap keeps reporting `connected: true` on a socket
+connection that died with the old HyperHDR, HyperHDR's `FLATBUFSERVER`
+input never appears, and `grep -c hyperhdr-domain /proc/net/unix` on the TV
+shows 1 (the listener alone) instead of 2. Fix: relaunch PicCap,
+`kill -TERM $(pidof hyperion-webos)` and then any call such as
+`luna-send -n 1 -f luna://org.webosbrew.piccap.service/status '{}'`, which
+makes webOS start the service again; it reconnects within seconds and the
+LED device comes on by itself. The guard's wake-time start of HyperHDR has
+not needed this so far (the loader's restart path is the same one).
 
 **After a wake or a board reboot** HyperHDR's "Maximum number of retries"
-matters: it is the number of extra opens, 2.5 s apart, after a failed one
-(0 means give up at once; the maximum is 120, about five minutes), and
-with any value above 0 a write failure, such as the board rebooting
-mid-stream, reconnects on its own. Set to 120 on 2026-11-02 (it was 0).
+matters: it is the number of extra connection attempts, 2.5 s apart, after
+a failed one (0 means give up at once; the maximum is 120, about five
+minutes), and with any value above 0 a send failure, such as the board
+rebooting mid-stream, reconnects on its own. 120 since 2026-11-02.
 
 ## Signal chain
 
 ```
 PicCap (screen capture on the TV)
-  → HyperHDR (on the TV, Adalight driver, AWA protocol, 2 Mb)
-  → TV USB → ESP32-S3 running Hyperk (HyperSerial on)
+  → HyperHDR (on the TV, "wled" driver: UDP to 192.168.8.248, port 21324)
+  → Wi-Fi → ESP32-S3 running WLED
   → GPIO 4 → 74AHCT125 level shifter → SK6812 RGBW strip
 ```
+
+The TV's USB cable to the board carries nothing now. It sits in the
+board's native "USB" port, where Task 2 of the WLED move left it; it can
+stay (the DevKitC's diode keeps the supply out of the TV) or go. The TV
+only sees a serial console from the board's COM port (see the end).
 
 ## Settings in this repo
 
@@ -107,13 +121,17 @@ changed on the TV since the last pull:
   (`/home/root/.config/HyperHDR/db/hyperhdr.db`). Filled-in password fields
   are written as `<redacted>`; the table of login hashes and API tokens is
   never read.
-- `ambilight/hyperk.json`: the board's config from its web API, Wi-Fi name
-  redacted. The board's address is found through HyperHDR's device
-  discovery and remembered as `hyperk` in `.pear.json`.
+- `ambilight/wled/cfg.json` and `presets.json`: the board's settings and
+  presets from WLED's `/cfg.json` and `/presets.json`, Wi-Fi network names
+  redacted (WLED never exports passwords, only their lengths). The board's
+  address is `wled` in `.pear.json`, or found through HyperHDR's device
+  discovery when it lists a `wled-*.local` host.
 - `ambilight/piccap.json`: PicCap's `config.json`.
+- `ambilight/hyperk.json`: the last config of the Hyperk firmware the board
+  ran until 2026-11-03, kept for going back (see Firmware).
 
 Pull only, for now. To put a setting back, change it in HyperHDR's web page
-(its admin API needs the web login) or Hyperk's.
+(its admin API needs the web login) or WLED's.
 
 ## Hardware
 
@@ -122,7 +140,7 @@ Pull only, for now. To put a setting back, change it in HyperHDR's web page
 | LEDs | SK6812 RGBW, 5 V, neutral white, 60/m |
 | Layout | 3 sides (top, left, right), 214 LEDs as mounted, ~3.6 m |
 | Controller | Hosyond ESP32-S3-WROOM-1 N16R8 (DevKitC-1 pinout) |
-| Firmware | Hyperk (HyperSerialESP32 has no S3 build) |
+| Firmware | WLED 16.0.1, the `ESP32-S3_16MB_opi` build (Hyperk until 2026-11-03) |
 | Level shifter | 74AHCT125 on a small PCB (replaced the TXS0108E on 2026-11-01; see `docs/ambilight-wiring-change-handoff.md`) |
 | Power | 5 V, 15–18 A (e.g. Mean Well LRS-100-5), mounted top center |
 
@@ -134,26 +152,28 @@ top ~162 cm (~97 LEDs), each side ~89 cm (~53 LEDs).
 **Data** enters at the bottom of the left side, runs up, across the top
 (left to right) and down the right side. One data line. HyperHDR's layout
 matches: 56 LEDs up the left, 102 across the top, 56 down the right (214,
-as mounted on 2026-11-01; the bench layout was 60/100/60). Hyperk's
-`numLeds` is the same 214; the three counts must agree or colors land in
-the wrong place.
+as mounted on 2026-11-01; the bench layout was 60/100/60). WLED's LED
+count is the same 214; the counts must agree or colors land in the wrong
+place.
 
-**ESP32-S3 to TV: use the board's "COM" USB-C port**, the one behind the
-CH343 bridge. It shows on the TV as `USB Single Serial`, `/dev/ttyACM0`,
-on the TV's built-in `cdc_acm` driver. Hyperk 0.0.5 does not answer
-HyperSerial on the native "USB" port: HyperHDR logs "Could not detect
-HyperSerial..." then "Timeout writing data". That is Hyperk issue
-[#75](https://github.com/awawa-dev/Hyperk/issues/75), a build-flag typo in
-0.0.5 that left native USB serial off for the S3; a fixed beta was promised
-on 2026-10-18. After reflashing a fixed build, either port should work.
+**ESP32-S3 to TV: Wi-Fi, not USB (since 2026-11-03).** The serial path
+was tried with WLED and failed: the stock build listens for Adalight on
+the S3's native "USB" port, which ignores baud rates, and WLED empties its
+256-byte receive buffer a byte at a time, so with 214 LEDs the first ~56
+tracked and the rest flickered rainbows at 16 fps (frames overflowing the
+buffer). Over UDP each frame is one packet handled whole: 50 fps, clean
+all round. The board's Wi-Fi signal is -22 dBm (the router is close); if
+tracking ever stutters, look at Wi-Fi first. The COM port (CH343 bridge,
+`/dev/ttyACM0` on the TV when a cable is in it) is free for the serial
+console; the cable is in the native port today.
 
 **ESP32-S3**
 - Powered from the LED supply's 5 V into its 5V pin (since 2026-11-02),
   on its own wire pair straight from the supply terminals: shared with
   the strip's feed, the board's LED dims on every surge of strip current.
-  The TV's USB cable carries data only. The DevKitC's diode between the
-  USB connector and the 5V pin is what keeps the supply out of the TV's
-  port. GPIO 4 → shifter input. GND → common ground.
+  The DevKitC's diode between the USB connector and the 5V pin is what
+  keeps the supply out of the TV's port if the cable stays plugged in.
+  GPIO 4 → shifter input. GND → common ground.
 - Avoid GPIO 0, 3, 45, 46 (boot straps), 19/20 (USB), 26–37 (flash and
   octal PSRAM on N16R8), 43/44 (UART), 48 (onboard RGB LED).
 - No longer needed now that the board is on the LED supply: the voltage
@@ -162,9 +182,6 @@ on 2026-10-18. After reflashing a fixed build, either port should work.
 - The flicker seen on 2026-10-31 with the board on the LED supply was a
   loose ground jumper, not the dual supply: single pixels wrong then
   correcting themselves.
-- Hyperk issue #79 (S3 fails to boot after power loss with LEDs on GPIO 4)
-  only affected a board flashed over WLED's OTA update. This board was
-  flashed with the official installer, so it does not apply.
 
 **74AHCT125** on the PCB, which sits with the ESP32 at the start of the
 strip (one gate used; it reads the ESP32's 3.3 V as high and drives the
@@ -198,11 +215,9 @@ the strip connected.
 The joints kept failing one after another (2026-11-02) because the PCB
 was wired with breadboard jumper wire, whose strands do not wet with
 solder. Use tinned 22 to 24 AWG stranded hookup wire, tin the end first,
-and leave a loop of slack at each joint. Two more lessons from that night:
+and leave a loop of slack at each joint. One more lesson from that night:
 with the TV on its screensaver the loader has stopped HyperHDR, so a meter
-on GPIO 4 reads about 50 mV (the board idling at 4 fps), not the 0.4 V of a
-50 fps stream; and after any power cycle of the board HyperHDR's LED device
-is off until someone turns it on (retry count 0).
+on GPIO 4 reads an effect's data, not a 50 fps stream.
 
 **Power**, from the supply at top center:
 - One 5 V + GND pair of 22 AWG silicone to each top corner (~1 m each),
@@ -212,80 +227,118 @@ is off until someone turns it on (retry count 0).
   (flicker near the input at high brightness).
 - 470–1000 µF / 10 V across 5 V and GND where power enters the strip, on
   the PCB, for the supply's turn-on inrush.
-- Cap HyperHDR at about 4 A per corner (8 A total). Two pairs per corner
-  only for uncapped full white.
+- Cap the current at about 4 A per corner (8 A total). Two pairs per corner
+  only for uncapped full white. Two limiters overlap: HyperHDR's power
+  limiter (Image Processing, Color Calibration, a percentage of full white)
+  and WLED's "Maximum PSU Current" (8000 mA at 80 mA per LED), which also
+  caps the effects; the lower one wins.
 - Trim the supply to ~5.1–5.2 V to offset drop; never above 5.3 V.
 - The LRS-100-5 has an audible coil whine at light load (2026-11-02: the
   strip at 30, 30, 30 plus the board, about 10 W). It faded under full red
-  (about 21 W), so the fix is to keep the idle load up: the Light Preset
-  is 60, 60, 60 (about 19 W, quiet). 85, 85, 85 would draw the same
-  current as full red (three channels at 85 = one at 255). A 10 Ω 5 W resistor across the output would do the
-  same for the same electricity (2.6 W, about $4 a year) and give heat
-  instead of light. If the whine comes back, raise the preset; if it
-  stays at any load, it is the transformer itself, not the load.
+  (about 21 W), so the idle load has to stay up, and a dark strip (the
+  "Off" preset, or the board locked on black) makes it sing. Warm glow is
+  amber at half brightness, about 15 W, quiet; Candle and Christmas were
+  quiet too. A 10 Ω 5 W resistor across the output would do the same for
+  the same electricity (2.6 W, about $4 a year) and give heat instead of
+  light. If the whine stays at any load, it is the transformer itself.
 - Corners: solder 5 V, GND and data jumpers between sections; check the
   arrows on the strip.
 - Common ground: supply, strip, shifter and ESP32.
 
-## Firmware: Hyperk
+## Firmware: WLED
 
-1. Flash from Chrome or Edge at https://hyperk.hyperhdr.org, using the
-   board's COM/UART port, ESP32-S3 build.
-2. Join it to Wi-Fi and open its web page (`http://hyperk.local`).
-3. LED type SK6812 RGBW (neutral), count 220, data pin GPIO 4, driver SPI
-   bitbang (DMA) first (RMT can flood interrupts). Serial port speed
-   2000000 under Network & Serial.
-4. The idle color is "Light Preset" on its Settings page: what the strip
-   shows whenever no stream is coming in, and what `ambilightguard` hands
-   the strip at power-off (the guard reads it off the board by itself, at
-   its start, after every screen-on and at power-off; nothing in the repo
-   needs changing). Hyperk 0.0.5 ignores the preset's brightness slider,
-   so dim it with the color values themselves. Set to 60, 60, 60 on
-   2026-11-02: 30, 30, 30 was a softer night-light, but at that load the
-   Mean Well whined (see Power below). Saving reboots the board.
-   `./pear ambilight pull` records the values in `ambilight/hyperk.json`.
+Flashed 2026-11-03 from https://install.wled.me in Chrome, over the
+board's native "USB" port, build `WLED_16.0.1_ESP32-S3_16MB_opi.bin`
+(16 MB flash, octal PSRAM); the installer joins it to Wi-Fi. Settings, all
+on its page under Config (read back from `/cfg.json`; `./pear ambilight
+pull` records them):
+
+- LED Preferences: output 1 **SK6812/WS2814 RGBW**, GRB, start 0, length
+  **214**, GPIO **4**; auto-calculate white from RGB **Accurate**; automatic
+  brightness limiter on, **8000 mA**, per-LED **80 mA** (Custom); apply
+  preset **1** at boot.
+- Sync Interfaces: Realtime timeout 2500 ms (does not apply to HyperHDR's
+  stream, which asks for no timeout), **Force max brightness on** so the
+  TV's frames ignore the master slider (tracking brightness is set in
+  HyperHDR, effects on the page); Receive UDP realtime on (HyperHDR's
+  stream uses it, port 21324); serial baud 1500000 (unused).
+- WiFi Setup: mDNS `wled-tv`.
+- Presets (JSON API, `psave`): 1 Warm glow (solid 255,147,41 at 128),
+  2 Candle (Candle Multi, 255,120,20 / 120,40,0 at 180), 3 Christmas
+  (Chase 2, red / green at 160), 4 Off.
+
+With auto-white Accurate a gray such as 60,60,60 becomes white-channel
+only at a fifth of the load, which is why Warm glow is amber: the supply
+whines below about 15 W (see Power).
+
+WLED's JSON API, for scripts: `GET /json/info` (`live`, `lm`, `leds.fps`),
+`GET /json/state`, `POST /json/state` with `{"ps":2}` (apply preset 2),
+`{"bri":128}`, `{"live":false}` (leave realtime mode; the guard's call),
+`{"psave":5,"n":"Name","ib":true,"sb":true}` (save the current state as
+preset 5), `POST /json/cfg` with `{"def":{"ps":1}}` (boot preset).
+
+**Going back to Hyperk.** Flash from Chrome at https://hyperk.hyperhdr.org
+using the board's COM port, ESP32-S3 build; join Wi-Fi; LED type SK6812
+RGBW, count 214, GPIO 4, driver SPI bitbang, serial 2000000; Light Preset
+60,60,60 (Hyperk 0.0.5 ignores the preset brightness, and dims only
+through the color values). The values are in `ambilight/hyperk.json`.
+HyperHDR then goes back to the adalight driver: output `ttyACM0`, 2000000,
+AWA protocol, ESP handshake and force detection all on (the device section
+of commit c17ca40 has them), the TV cable on the board's COM port (Hyperk
+0.0.5 does not answer on the native port, its issue #75), and the guard
+would need its old job back (commit 0e0c966 has it). Hyperk's only idle
+effects are Solid Color and Rainbow.
 
 ## HyperHDR (on the TV, http://<tv-ip>:8090)
 
-LED Hardware, controller type **adalight** (set 2026-10-30; it was the
-debug `file` output before, which is why nothing reached the board):
+LED Hardware, controller type **wled** (set 2026-11-03; adalight to the
+board over USB before that):
 
-- Output path `ttyACM0`, baud 2000000
-- High-speed serial AWA protocol with data integrity check: on
-- ESP8266/ESP32/RP2040/RP2350 handshake: on
-- Force HyperSerial detection: on
-- RGB byte order rgb; RGBW dithering and white calibration off until the
-  strip is wired and can be judged
+- Host 192.168.8.248. HyperHDR reads the board's LED count, port and
+  power limiter from `/json/info` at every start, warns about the limiter
+  ("half-measure"; ignore) and streams UDP to the board's `udpport`.
+- Override brightness ("brightnessMax") **off**: HyperHDR would otherwise
+  set WLED's master slider to 255 at every stream start, and the effects
+  would come back full bright.
+- Restore original state **on**: a clean stop puts WLED back to the state
+  HyperHDR found at stream start (the effect, its brightness).
 - Maximum number of retries 120 (the maximum; set 2026-11-02, it was 0).
-  Extra opens 2.5 s apart after a failed one, and with any value above 0
-  a write failure reconnects on its own, so a board reboot mid-stream no
-  longer strands the LED device.
+- Image Processing, Color Calibration, power limiter 60 % (Eddie's
+  setting, 2026-11-03; it was 50).
+
+HyperHDR's admin API needs a login the config call does not have from a
+script ("No Authorization"); the device section was changed by stopping
+HyperHDR through the loader, editing `settings` row `device` in its SQLite
+database (`/usr/bin/sqlite3` exists on the TV, or edit a copy on the
+laptop), and starting it again, then relaunching PicCap. Backups from the
+2026-11-03 changes: `hyperhdr.db.bak-adalight`, `hyperhdr.db.bak-wledudp`
+next to the database.
 
 ## Is it working?
 
-1. On the TV: `ls /dev/ttyACM*` after plugging the board in. No tty means
-   the cable is in the wrong port or the board has no power.
-2. HyperHDR Logs: `DETECTED DEVICE USING ... FIRMWARE (Hyperk HyperSerial
-   interface ...)`.
-3. Hyperk's Stats page (`http://hyperk.local/stats.html`): Color stream
-   "Serial port", about 50 FPS. Its `/api/stats` says the same as JSON
-   (`LIVE` 2).
-4. HyperHDR Remote Control: set a solid color. Strip lights = HyperHDR →
-   ESP32 → LEDs works. Solid color works but video doesn't = PicCap side.
-   Single pixels wrong then correcting themselves while a solid color is
-   up = a loose ground or data jumper, not software. The whole strip
-   sitting on Hyperk's idle color = the data path works but nothing is
-   being sent: HyperHDR has no input, almost always PicCap stuck on a dead
-   connection after a HyperHDR restart (see Sleep and wake). The strip
-   frozen on garbage that no color changes = the LEDs are not getting
-   valid data or enough voltage; put a meter on the shifter's 5 V with
-   the strip connected.
-5. `./pear ambilight status`: the guard is running and knows the idle
-   color. Press Power: the strip turns that color at once and keeps it
-   after the board's LED goes out.
+1. The board's page answers at `http://192.168.8.248`. Nothing there means
+   the board has no power or no Wi-Fi (its own `WLED-AP` access point
+   appears when it cannot join).
+2. `curl -s http://192.168.8.248/json/info`: with the TV on, `"live":true`,
+   `"lm":"UDP"`, `"fps"` about 50 under `leds`. `live` false with the TV
+   on = HyperHDR is not streaming: HyperHDR has no input, almost always
+   PicCap stuck on a dead connection after a HyperHDR restart (see Sleep
+   and wake). `live` true with `fps` 0 and the TV off = the board is stuck
+   in realtime mode; `POST /json/state {"live":false}` frees it, and the
+   guard should have done that (check its log).
+3. HyperHDR Remote Control: set a solid color. Strip lights = HyperHDR →
+   Wi-Fi → board → LEDs works. Solid color works but video doesn't = PicCap
+   side. Single pixels wrong then correcting themselves while a solid color
+   is up = a loose ground or data jumper, not software. The strip frozen on
+   garbage that no color changes = the LEDs are not getting valid data or
+   enough voltage; put a meter on the shifter's 5 V with the strip
+   connected.
+4. `./pear ambilight status`: the guard is running and knows the board.
+   Press Power: the strip goes to the current effect within a second or
+   two and stays there. Press Power again: tracking is back without
+   touching anything.
 
-Steps 1 to 3 passed on 2026-10-30 with the strip not yet wired; 4 and 5 on
-2026-10-31 with the strip on the bench.
+All four passed on 2026-11-03.
 
 Do not `kill -9` HyperHDR on the TV: it leaves `/tmp/hyperhdr-domain`
 behind and every HyperHDR after that fails to bind it, so PicCap shows
@@ -293,14 +346,14 @@ behind and every HyperHDR after that fails to bind it, so PicCap shows
 the loader (`luna://org.webosbrew.hyperhdr.loader.service/stop` and
 `/start`); if it has happened, remove the socket file and restart.
 
-HyperHDR can also come up wedged after a wake (seen 2026-11-02, twice):
-the process exists with only 3 threads, port 8090 is not listening, PicCap
-shows `"connected": false`, and the loader's `stop` does nothing. Fix:
-`kill -TERM $(pidof hyperhdr)`, wait for it to exit, remove the socket
-file if it is still there, then the loader's `start`. Both wedges happened
-while the board was rebooting as HyperHDR started.
+HyperHDR can also come up wedged after a wake (seen 2026-11-02, twice,
+under Hyperk): the process exists with only 3 threads, port 8090 is not
+listening, PicCap shows `"connected": false`, and the loader's `stop` does
+nothing. Fix: `kill -TERM $(pidof hyperhdr)`, wait for it to exit, remove
+the socket file if it is still there, then the loader's `start`. Both
+wedges happened while the board was rebooting as HyperHDR started.
 
-## Debugging the board from the TV
+## Debugging from the TV
 
 The loader gives HyperHDR no log file. To read its log, stop it through
 the loader and run the same binary in the foreground for half a minute:
@@ -315,11 +368,11 @@ $L -n 1 luna://org.webosbrew.hyperhdr.loader.service/start '{}'
 grep -a LEDDEVICE /tmp/hhdr.log
 ```
 
-The board's console is the same port. With HyperHDR stopped, `stty -F
+The board's console is its COM port, if the TV cable is moved to it
+(it is in the native port today): `stty -F
 /dev/ttyACM0 115200 raw -echo` and `cat /dev/ttyACM0` shows the ESP32's
 boot messages; the TV has Python 2.7, and the DTR/RTS reset the flasher
 uses is two `TIOCMSET` ioctls (DTR off and RTS on for 0.25 s, then both
-off), which resets the board without touching it. Always put the speed
-back (`stty -F /dev/ttyACM0 2000000`) and restart HyperHDR through the
-loader afterwards. Do not `pkill -f` by a pattern that is in your own
-command line: busybox matches the ssh shell and kills the session.
+off), which resets the board without touching it. Do not `pkill -f` by a
+pattern that is in your own command line: busybox matches the ssh shell
+and kills the session.
