@@ -228,10 +228,21 @@ on GPIO 4 reads an effect's data, not a 50 fps stream.
 - 470–1000 µF / 10 V across 5 V and GND where power enters the strip, on
   the PCB, for the supply's turn-on inrush.
 - Cap the current at about 4 A per corner (8 A total). Two pairs per corner
-  only for uncapped full white. Two limiters overlap: HyperHDR's power
-  limiter (Image Processing, Color Calibration, a percentage of full white)
-  and WLED's "Maximum PSU Current" (8000 mA at 80 mA per LED), which also
-  caps the effects; the lower one wins.
+  only for uncapped full white. Two limiters overlap, and only one is a
+  safety limit: WLED's "Maximum PSU Current" (8000 mA at 80 mA per LED)
+  estimates the real draw from the colors it outputs, effects and tracking
+  alike, and dims the strip to fit; HyperHDR's power limiter (Image
+  Processing, Color Calibration, a percentage of full white) is a
+  brightness policy that scales frames and knows nothing about amps.
+  Numbers behind the cap: the supply is rated 20 A, 15 A for continuous
+  use; 214 LEDs at 80 mA are 17 A worst case, but with auto-white
+  Accurate a white field is one channel, so video tops out near 9 A (a
+  yellow or cyan field); one 22 AWG pair carries 5 A comfortably. With
+  feeds at the ends only, 8 A is the ceiling (4 A per feed; the top
+  middle, 107 LEDs from either feed, dims at that). With the corner feeds
+  and their 5 A fuses in, 12 to 15 A. A limiter only ever dims, so a
+  wrong value is a dim strip, not a hot wire; the fuses are for shorts,
+  which no limiter sees.
 - Trim the supply to ~5.1–5.2 V to offset drop; never above 5.3 V.
 - The LRS-100-5 has an audible coil whine at light load (2026-11-02: the
   strip at 30, 30, 30 plus the board, about 10 W). It faded under full red
