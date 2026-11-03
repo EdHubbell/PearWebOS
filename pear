@@ -7,10 +7,11 @@
     ./pear on | off    Pear Home, or LG's own Home
     ./pear shot        save a screenshot of the TV to docs/screenshot.jpg
     ./pear uninstall   remove PearWebOS from the TV
-    ./pear ambilight pull   copy HyperHDR, Hyperk and PicCap settings into ambilight/
+    ./pear ambilight pull   copy HyperHDR, WLED and PicCap settings into ambilight/
     ./pear ambilight install | uninstall | status
-                       the guard that gives the strip its idle color at power-off
+                       the guard that hands the strip back to WLED at power-off
 """
+import http.client
 import io
 import json
 import os
@@ -310,18 +311,30 @@ def http_json(url, payload=None):
         return json.load(r)
 
 
-def hyperk_address(conf):
-    """The board's address: remembered in .pear.json, or found where HyperHDR's
-    device discovery lists it by its mDNS name; None when neither knows."""
+def wled_address(conf):
+    """The WLED board's address: remembered in .pear.json; else the host
+    HyperHDR streams to (its pulled device settings, when of type wled); else
+    where HyperHDR's device discovery lists it by its mDNS name; None when
+    none knows. A found address is remembered."""
     import ambilight
-    hyperk = conf.get("hyperk")
-    if not hyperk:
-        info = http_json(f"http://{conf['tv']}:{HYPERHDR_PORT}/json-rpc", {"command": "serverinfo", "tan": 1})
-        hyperk = ambilight.hyperk_address(info.get("info", {}).get("sessions"))
-        if hyperk:
-            conf["hyperk"] = hyperk
-            save(conf)
-    return hyperk
+    wled = conf.get("wled")
+    if not wled:
+        try:
+            with open(os.path.join(AMBILIGHT_DIR, "hyperhdr", "instance-0", "device.json"), encoding="utf-8") as f:
+                device = json.load(f)
+            wled = device.get("host") if device.get("type") == "wled" else None
+        except (OSError, ValueError):
+            wled = None
+    if not wled:
+        try:
+            info = http_json(f"http://{conf['tv']}:{HYPERHDR_PORT}/json-rpc", {"command": "serverinfo", "tan": 1})
+            wled = ambilight.wled_address(info.get("info", {}).get("sessions"))
+        except (OSError, ValueError):
+            wled = None
+    if wled and conf.get("wled") != wled:
+        conf["wled"] = wled
+        save(conf)
+    return wled
 
 
 def cmd_ambilight():
@@ -346,17 +359,19 @@ def ambilight_pull(conf):
     ambilight.write_json(os.path.join(AMBILIGHT_DIR, "piccap.json"), json.loads(ssh(conf, f"cat {PICCAP_CONF}")))
     written.append("piccap.json")
 
-    hyperk = hyperk_address(conf)
-    if hyperk:
-        print(f"Hyperk: reading the board's config at {hyperk}...")
+    wled = wled_address(conf)
+    if wled:
+        print(f"WLED: reading the board's config and presets at {wled}...")
         try:
-            pulled = http_json(f"http://{hyperk}/api/get_current_config")
-            ambilight.write_json(os.path.join(AMBILIGHT_DIR, "hyperk.json"), ambilight.hyperk_for_repo(pulled))
-            written.append("hyperk.json")
-        except OSError as e:
-            print(f"  (skipped: the board did not answer at {hyperk}: {e})")
+            cfg = http_json(f"http://{wled}/cfg.json")
+            presets = http_json(f"http://{wled}/presets.json")
+            ambilight.write_json(os.path.join(AMBILIGHT_DIR, "wled", "cfg.json"), ambilight.wled_for_repo(cfg))
+            ambilight.write_json(os.path.join(AMBILIGHT_DIR, "wled", "presets.json"), presets)
+            written += ["wled/cfg.json", "wled/presets.json"]
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            print(f"  (skipped: the board did not answer at {wled}: {e})")
     else:
-        print("Hyperk: not found by HyperHDR's discovery; set \"hyperk\" to the board's IP in .pear.json")
+        print("WLED: not found by HyperHDR's discovery; set \"wled\" to the board's IP in .pear.json")
 
     print(f"Wrote {len(written)} files under {os.path.relpath(AMBILIGHT_DIR)}/ ; `git diff` shows what changed.")
 
@@ -364,16 +379,16 @@ def ambilight_pull(conf):
 def ambilight_install(conf):
     """Put tv/ambilightguard on the TV with its own startup hook and start it.
     Nothing of Pear's is involved: it stays if Pear is uninstalled."""
-    hyperk = hyperk_address(conf)
-    if not hyperk:
-        sys.exit("The board's address is needed: set \"hyperk\" to its IP in .pear.json")
+    wled = wled_address(conf)
+    if not wled:
+        sys.exit("The board's address is needed: set \"wled\" to its IP in .pear.json")
     with open(os.path.join(HERE, "tv", "ambilightguard"), "rb") as f:
         # LF only, whatever the checkout did: "#!/bin/sh\r" is "not found"
         script = f.read().replace(b"\r\n", b"\n")
-    print(f"Installing ambilightguard on the TV (board at {hyperk})...")
+    print(f"Installing ambilightguard on the TV (board at {wled})...")
     ssh(conf, f"mkdir -p {GUARD_DIR} && cat > {GUARD_DIR}/ambilightguard && chmod 755 {GUARD_DIR}/ambilightguard && "
-              f"echo {hyperk} > {GUARD_DIR}/hyperk && "
-              f"printf '#!/bin/sh\\n# ambilightguard: the LED strip gets its idle color before the TV sleeps\\n"
+              f"echo {wled} > {GUARD_DIR}/wled && rm -f {GUARD_DIR}/hyperk {GUARD_DIR}/idle-color && "
+              f"printf '#!/bin/sh\\n# ambilightguard: the LED strip goes back to WLED when the TV sleeps\\n"
               f"{GUARD_DIR}/ambilightguard start\\n' > {GUARD_HOOK} && chmod 755 {GUARD_HOOK} && "
               f"{GUARD_DIR}/ambilightguard start", stdin=script)
     ambilight_status(conf)
@@ -386,7 +401,7 @@ def ambilight_uninstall(conf):
 
 def ambilight_status(conf):
     print(ssh(conf, f"if [ -f {GUARD_DIR}/ambilightguard.pid ] && kill -0 $(cat {GUARD_DIR}/ambilightguard.pid) 2>/dev/null; "
-                    f"then echo 'ambilightguard: running, idle color '$(cat {GUARD_DIR}/idle-color 2>/dev/null || echo unknown); "
+                    f"then echo 'ambilightguard: running, board '$(cat {GUARD_DIR}/wled 2>/dev/null || echo unknown); "
                     f"else echo 'ambilightguard: not running'; fi; "
                     f"[ -f {GUARD_HOOK} ] && echo 'startup hook: {GUARD_HOOK}' || echo 'startup hook: none'; "
                     f"tail -n 5 {GUARD_DIR}/ambilightguard.log 2>/dev/null | sed 's/^/  /'", check=False).rstrip())

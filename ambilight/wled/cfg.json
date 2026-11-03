@@ -1,0 +1,322 @@
+{
+  "ap": {
+    "behav": 0,
+    "chan": 6,
+    "hide": 0,
+    "ip": [
+      4,
+      3,
+      2,
+      1
+    ],
+    "pskl": 8,
+    "ssid": "WLED-AP"
+  },
+  "def": {
+    "bri": 128,
+    "on": true,
+    "ps": 1
+  },
+  "hw": {
+    "baud": 15000,
+    "btn": {
+      "ins": [
+        {
+          "macros": [
+            0,
+            0,
+            0
+          ],
+          "pin": [
+            0
+          ],
+          "type": 2
+        }
+      ],
+      "max": 32,
+      "mqtt": false,
+      "pull": true,
+      "tt": 32
+    },
+    "com": [],
+    "if": {
+      "i2c-pin": [
+        -1,
+        -1
+      ],
+      "spi-pin": [
+        -1,
+        -1,
+        -1
+      ]
+    },
+    "ir": {
+      "pin": -1,
+      "sel": true,
+      "type": 0
+    },
+    "led": {
+      "cb": 0,
+      "cct": false,
+      "cr": false,
+      "fps": 42,
+      "ic": false,
+      "ins": [
+        {
+          "drv": 0,
+          "freq": 0,
+          "ledma": 80,
+          "len": 214,
+          "maxpwr": 0,
+          "order": 0,
+          "pin": [
+            4
+          ],
+          "ref": false,
+          "rev": false,
+          "rgbwm": 2,
+          "skip": 0,
+          "start": 0,
+          "text": "",
+          "type": 30
+        }
+      ],
+      "maxpwr": 8000,
+      "rgbwm": 255,
+      "total": 214
+    },
+    "relay": {
+      "odrain": false,
+      "pin": -1,
+      "rev": false
+    }
+  },
+  "id": {
+    "inv": "Light",
+    "mdns": "wled-tv",
+    "name": "WLED",
+    "sui": false
+  },
+  "if": {
+    "hue": {
+      "en": false,
+      "id": 1,
+      "ip": "<redacted>",
+      "iv": 25,
+      "recv": {
+        "bri": true,
+        "col": true,
+        "on": true
+      }
+    },
+    "live": {
+      "dmx": {
+        "addr": 1,
+        "dmxInputPort": 2,
+        "dss": 0,
+        "e131prio": 0,
+        "inputEnablePin": -1,
+        "inputRxPin": -1,
+        "inputTxPin": -1,
+        "mode": 4,
+        "seqskip": false,
+        "uni": 1
+      },
+      "en": true,
+      "maxbri": true,
+      "mc": false,
+      "mso": false,
+      "no-gc": true,
+      "offset": 0,
+      "port": 5568,
+      "rlm": true,
+      "timeout": 25
+    },
+    "mqtt": {
+      "broker": "",
+      "cid": "WLED-773018",
+      "en": false,
+      "port": 1883,
+      "pskl": 0,
+      "rtn": false,
+      "topics": {
+        "device": "wled/773018",
+        "group": "wled/all"
+      },
+      "user": ""
+    },
+    "nodes": {
+      "bcast": true,
+      "list": true
+    },
+    "ntp": {
+      "ampm": false,
+      "en": false,
+      "host": "0.wled.pool.ntp.org",
+      "ln": 0,
+      "lt": 0,
+      "offset": 0,
+      "tz": 0
+    },
+    "sync": {
+      "espnow": false,
+      "port0": 21324,
+      "port1": 65506,
+      "recv": {
+        "bri": true,
+        "col": true,
+        "fx": true,
+        "grp": 1,
+        "pal": true,
+        "sb": false,
+        "seg": false
+      },
+      "send": {
+        "btn": true,
+        "dir": true,
+        "en": false,
+        "grp": 1,
+        "hue": false,
+        "ret": 0,
+        "va": false
+      }
+    },
+    "va": {
+      "alexa": false,
+      "macros": [
+        0,
+        0
+      ],
+      "p": 0
+    }
+  },
+  "light": {
+    "aseg": false,
+    "gc": {
+      "bri": 1,
+      "col": 2.2,
+      "val": 2.2
+    },
+    "nl": {
+      "dur": 60,
+      "macro": 0,
+      "mode": 1,
+      "tbri": 0
+    },
+    "pal-mode": 0,
+    "scale-bri": 100,
+    "tr": {
+      "dur": 7,
+      "hrp": true,
+      "rpc": 5
+    }
+  },
+  "nw": {
+    "dns": [
+      8,
+      8,
+      8,
+      8
+    ],
+    "espnow": false,
+    "ins": [
+      {
+        "bssid": "",
+        "gw": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "ip": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "pskl": 8,
+        "sn": [
+          255,
+          255,
+          255,
+          0
+        ],
+        "ssid": "<redacted>"
+      }
+    ],
+    "linked_remote": []
+  },
+  "ol": {
+    "clock": 0,
+    "cntdwn": false,
+    "max": 29,
+    "min": 0,
+    "o12pix": 0,
+    "o5m": false,
+    "osb": false,
+    "osec": false
+  },
+  "ota": {
+    "aota": false,
+    "lock": false,
+    "lock-wifi": false,
+    "pskl": 7,
+    "same-subnet": true
+  },
+  "rev": [
+    1,
+    0
+  ],
+  "timers": {
+    "cntdwn": {
+      "goal": [
+        20,
+        1,
+        1,
+        0,
+        0,
+        0
+      ],
+      "macro": 0
+    },
+    "ins": []
+  },
+  "um": {
+    "AudioReactive": {
+      "add-palettes": false,
+      "config": {
+        "AGC": 0,
+        "gain": 60,
+        "squelch": 10
+      },
+      "digitalmic": {
+        "pin": [
+          32,
+          15,
+          14,
+          -1
+        ],
+        "type": 1
+      },
+      "dynamics": {
+        "fall": 1400,
+        "limiter": true,
+        "rise": 80
+      },
+      "enabled": false,
+      "frequency": {
+        "scale": 3
+      },
+      "sync": {
+        "mode": 0,
+        "port": 11988
+      }
+    }
+  },
+  "vid": 2606300,
+  "wifi": {
+    "phy": false,
+    "sleep": false,
+    "txpwr": 78
+  }
+}

@@ -1,10 +1,12 @@
 """The ambilight's settings, as files that diff well.
 
 HyperHDR keeps its settings in a SQLite database on the TV, one JSON blob per
-section; Hyperk answers its config over HTTP; PicCap has a config.json. This
-module turns each into sorted, indented JSON under a folder, so `git diff`
-after `pear ambilight pull` shows exactly what changed on the TV.
+section; WLED serves its config and presets over HTTP; PicCap has a
+config.json. This module turns each into sorted, indented JSON under a
+folder, so `git diff` after `pear ambilight pull` shows exactly what changed
+on the TV.
 """
+import copy
 import json
 import os
 import sqlite3
@@ -55,18 +57,47 @@ def export_hyperhdr(db_path, out_dir):
         con.close()
 
 
-def hyperk_for_repo(pulled):
-    """Hyperk's /api/get_current_config answer, minus the Wi-Fi network name."""
-    config = dict(pulled.get("config", pulled))
-    if "ssid" in config:
-        config["ssid"] = REDACTED
-    return config
+# WLED cfg.json fields that say where or whose the board is: (path, key)
+WLED_PRIVATE = (("ap", "ssid"), ("if", "ntp", "ln"), ("if", "ntp", "lt"),
+                ("if", "mqtt", "broker"), ("if", "mqtt", "user"), ("if", "hue", "ip"))
+WLED_AP_DEFAULT = "WLED-AP"
 
 
-def hyperk_address(sessions):
-    """The Hyperk board's IP from HyperHDR's device discovery (serverinfo
-    'sessions'), where it shows up by mDNS as hyperk.local; None if absent."""
+def _private(value):
+    """A filled-in value: not empty, zero, or an all-zero address."""
+    if isinstance(value, list):
+        return any(value)
+    return bool(value)
+
+
+def wled_for_repo(cfg):
+    """WLED's /cfg.json, minus what would place or identify the owner: Wi-Fi
+    network names and BSSIDs, the renamed setup AP, the NTP location, the
+    MQTT broker and user, the Hue bridge address. Passwords are never in it
+    (WLED exports only their lengths, `pskl`). Empty fields stay empty so the
+    diff stays honest."""
+    out = copy.deepcopy(cfg)
+    for net in (out.get("nw") or {}).get("ins") or []:
+        if isinstance(net, dict):
+            for key in ("ssid", "bssid"):
+                if _private(net.get(key)):
+                    net[key] = REDACTED
+    for *path, key in WLED_PRIVATE:
+        node = out
+        for part in path:
+            node = node.get(part) if isinstance(node, dict) else None
+        if isinstance(node, dict) and _private(node.get(key)):
+            if path == ["ap"] and node[key] == WLED_AP_DEFAULT:
+                continue
+            node[key] = REDACTED
+    return out
+
+
+def wled_address(sessions):
+    """The WLED board's IP from HyperHDR's device discovery (serverinfo
+    'sessions'), where it shows up by its mDNS name wled-*.local; None if
+    absent."""
     for s in sessions or []:
-        if str(s.get("host", "")).startswith("hyperk."):
+        if str(s.get("host", "")).startswith("wled"):
             return s.get("address")
     return None

@@ -1,13 +1,10 @@
 {
-  "awa_mode": true,
+  "brightnessMax": false,
+  "brightnessMaxLevel": 255,
   "colorOrder": "rgb",
-  "enable_ice_rgbw": false,
-  "espHandshake": true,
-  "forceSerialDetection": true,
+  "host": "192.168.8.248",
   "maxRetry": 120,
-  "output": "ttyACM0",
-  "rate": 2000000,
   "refreshTime": 20,
-  "type": "adalight",
-  "white_channel_calibration": false
+  "restoreOriginalState": true,
+  "type": "wled"
 }

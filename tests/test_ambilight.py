@@ -63,18 +63,62 @@ def test_json_files_are_stable_for_diffing(tmp_path):
         assert f.read() == b'{\n  "alpha": {\n    "a": 1,\n    "b": 2\n  },\n  "zeta": 1\n}\n'
 
 
-def test_hyperk_config_drops_the_wifi_name():
-    pulled = {"config": {"deviceName": "hyperk", "ssid": "My Home Wifi", "numLeds": 200}}
+def test_wled_config_drops_the_wifi_names():
+    cfg = {"nw": {"ins": [{"ssid": "My Home Wifi", "pskl": 12, "ip": [0, 0, 0, 0]},
+                          {"ssid": "Cabin", "pskl": 8}]},
+           "ap": {"ssid": "WLED-AP", "pskl": 8}, "hw": {"led": {"total": 214}}}
 
-    assert ambilight.hyperk_for_repo(pulled) == {"deviceName": "hyperk", "ssid": "<redacted>", "numLeds": 200}
+    out = ambilight.wled_for_repo(cfg)
+
+    assert [n["ssid"] for n in out["nw"]["ins"]] == ["<redacted>", "<redacted>"]
+    assert out["nw"]["ins"][0]["pskl"] == 12
+    assert out["ap"]["ssid"] == "WLED-AP"
+    assert out["hw"] == {"led": {"total": 214}}
+    assert cfg["nw"]["ins"][0]["ssid"] == "My Home Wifi"  # input untouched
 
 
-def test_hyperk_address_comes_from_hyperhdr_discovery():
+def test_wled_config_drops_other_location_and_account_fields():
+    cfg = {"nw": {"ins": [{"ssid": "Home", "bssid": "AA:BB:CC:DD:EE:FF"}]},
+           "ap": {"ssid": "my-ap"},
+           "if": {"ntp": {"ln": -97.7, "lt": 30.3, "host": "0.wled.pool.ntp.org"},
+                  "mqtt": {"broker": "mqtt.lan", "user": "eddie", "port": 1883},
+                  "hue": {"ip": [192, 168, 8, 50], "id": 1}}}
+
+    out = ambilight.wled_for_repo(cfg)
+
+    assert out["nw"]["ins"][0]["bssid"] == "<redacted>"
+    assert out["ap"]["ssid"] == "<redacted>"
+    assert out["if"]["ntp"] == {"ln": "<redacted>", "lt": "<redacted>", "host": "0.wled.pool.ntp.org"}
+    assert out["if"]["mqtt"] == {"broker": "<redacted>", "user": "<redacted>", "port": 1883}
+    assert out["if"]["hue"] == {"ip": "<redacted>", "id": 1}
+
+
+def test_wled_config_leaves_empty_fields_empty():
+    cfg = {"nw": {"ins": [{"ssid": "", "bssid": ""}]}, "ap": {"ssid": "WLED-AP"},
+           "if": {"ntp": {"ln": 0, "lt": 0}, "mqtt": {"broker": "", "user": ""}, "hue": {"ip": [0, 0, 0, 0]}}}
+
+    out = ambilight.wled_for_repo(cfg)
+
+    assert out["nw"]["ins"][0] == {"ssid": "", "bssid": ""}
+    assert out["ap"]["ssid"] == "WLED-AP"  # the factory name is not a secret
+    assert out["if"] == cfg["if"]
+
+
+def test_pull_helpers_tolerate_missing_sections():
+    assert ambilight.wled_for_repo({"hw": {}}) == {"hw": {}}
+    assert ambilight.wled_for_repo({"nw": {}}) == {"nw": {}}
+    assert ambilight.wled_for_repo({"nw": {"ins": [{"pskl": 0}]}}) == {"nw": {"ins": [{"pskl": 0}]}}
+    assert ambilight.wled_for_repo({"if": {"ntp": {}}}) == {"if": {"ntp": {}}}
+    assert ambilight.wled_for_repo({"if": {"hue": {"ip": "not-a-list"}}}) == {"if": {"hue": {"ip": "<redacted>"}}}
+
+
+def test_wled_address_comes_from_hyperhdr_discovery():
     sessions = [{"address": "ttyACM0", "host": "USB JTAG serial debug unit", "name": "ESP board", "port": -1},
-                {"address": "192.168.8.248", "host": "hyperk.local", "name": "WLED", "port": 80}]
+                {"address": "192.168.8.248", "host": "wled-tv.local", "name": "WLED", "port": 80}]
 
-    assert ambilight.hyperk_address(sessions) == "192.168.8.248"
-    assert ambilight.hyperk_address(sessions[:1]) is None
+    assert ambilight.wled_address(sessions) == "192.168.8.248"
+    assert ambilight.wled_address(sessions[:1]) is None
+    assert ambilight.wled_address(None) is None
 
 
 def test_export_redacts_passwords_in_hyperhdr_sections(tmp_path):
